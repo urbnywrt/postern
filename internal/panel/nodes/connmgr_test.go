@@ -784,8 +784,14 @@ func TestManagerCloseLeavesNothingRunning(t *testing.T) {
 	case <-time.After(waitTimeout):
 		t.Fatal("Close did not return")
 	}
-	if left := managerGoroutines(); len(left) != 0 {
-		t.Errorf("goroutines left after Close:\n%s", strings.Join(left, "\n\n"))
+	// A goroutine of the manager calls wg.Done as it returns, and Close may
+	// return before it has: it is gone a moment later, not at once.
+	deadline := time.Now().Add(waitTimeout)
+	for left := managerGoroutines(); len(left) != 0; left = managerGoroutines() {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines left after Close:\n%s", strings.Join(left, "\n\n"))
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 	waitFor(t, "the connection to close", func() bool { return up.openConns() == 0 })
 
