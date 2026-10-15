@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+{{if .NoIndex}}<meta name="robots" content="noindex, nofollow, noarchive">
+{{end}}<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{.CSS}}">
+</head>
+<body>
+<main class="board">
+<p class="eyebrow">MTProto · <b>Telegram</b></p>
+<h1>{{.Title1}}{{if .Title2}}<span>{{.Title2}}</span>{{end}}</h1>
+{{if .Body}}<div class="lede">
+{{.Body}}</div>
+{{else}}<p class="lede">{{.L.Lede}}</p>
+{{end}}{{if .Items}}<ol class="rows">
+{{range .Items}}{{if .Available}}<li><a href="{{.TG}}"><span class="code">{{.Code}}</span><span><span class="city">{{.Name}}</span>{{if .Note}}<span class="note">{{.Note}}</span>{{end}}<span class="addr">{{.Addr}}</span></span><span class="go" aria-hidden="true">→</span></a></li>
+{{else}}<li class="off"><div class="row"><span class="code">{{.Code}}</span><span><span class="city">{{.Name}}</span>{{if .Note}}<span class="note">{{.Note}}</span>{{end}}</span><span class="go">{{$.L.Unavailable}}</span></div></li>
+{{end}}{{end}}</ol>
+{{if .Manual}}<details class="manual"><summary>{{.L.Manual}}</summary>
+<p>{{.L.ManualHint}}</p>
+<ul class="params">
+{{range .Items}}{{if .Available}}<li><b>{{if .Code}}{{.Code}} · {{end}}{{.Name}}</b>
+<dl>
+<div><dt>{{$.L.Server}}</dt><dd><code data-copy="{{$.L.Copy}}" data-copied="{{$.L.Copied}}">{{.Server}}</code></dd></div>
+{{if .Port}}<div><dt>{{$.L.Port}}</dt><dd><code data-copy="{{$.L.Copy}}" data-copied="{{$.L.Copied}}">{{.Port}}</code></dd></div>
+{{end}}<div><dt>{{$.L.Secret}}</dt><dd><code data-copy="{{$.L.Copy}}" data-copied="{{$.L.Copied}}">{{.Secret}}</code></dd></div>
+</dl>
+<a class="tme" href="{{.HTTPS}}" rel="noopener noreferrer">{{$.L.Fallback}}</a></li>
+{{end}}{{end}}</ul>
+</details>
+{{end}}{{else}}<p class="empty">{{.L.Empty}}</p>
+{{end}}<footer>{{range $i, $line := .Footer}}{{if $i}}<br>{{end}}{{$line}}{{end}}</footer>
+</main>
+<script src="{{.JS}}" defer></script>
+</body>
+</html>

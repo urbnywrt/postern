@@ -1,0 +1,62 @@
+{
+  "Image": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
+  "User": "65534:65534",
+  "Entrypoint": [
+    "/opt/engine/telemt",
+    "/etc/telemt/config.toml"
+  ],
+  "Cmd": [
+    "--verbose"
+  ],
+  "Env": [
+    "TZ=UTC",
+    "RUST_LOG=info"
+  ],
+  "Labels": {
+    "postern.generation": "2",
+    "postern.id": "abc123",
+    "postern.managed": "true",
+    "postern.role": "engine"
+  },
+  "StopTimeout": 35,
+  "HostConfig": {
+    "Binds": [
+      "/opt/postern/data/artifacts/telemt/3.5.13/x86_64/telemt:/opt/engine/telemt:ro",
+      "/opt/postern/data/instances/abc123-g2:/etc/telemt"
+    ],
+    "NetworkMode": "host",
+    "RestartPolicy": {
+      "Name": "unless-stopped"
+    },
+    "ReadonlyRootfs": true,
+    "CapAdd": [
+      "NET_BIND_SERVICE"
+    ],
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,size=16m"
+    },
+    "Memory": 268435456,
+    "PidsLimit": 256,
+    "Ulimits": [
+      {
+        "Name": "nofile",
+        "Soft": 1048576,
+        "Hard": 1048576
+      }
+    ],
+    "LogConfig": {
+      "Type": "json-file",
+      "Config": {
+        "max-file": "2",
+        "max-size": "5m"
+      }
+    },
+    "PidMode": "host"
+  }
+}

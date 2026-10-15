@@ -1,0 +1,2 @@
+1: lo    inet 127.0.0.1/8 scope host lo
+2: ens3    inet 198.51.100.40/24 scope global ens3

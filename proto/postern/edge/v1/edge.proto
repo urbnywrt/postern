@@ -1,0 +1,323 @@
+syntax = "proto3";
+
+package postern.edge.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/edge/v1;edgev1";
+
+// EdgeControlService is served by the edge process on a unix socket and called
+// by the node agent.
+service EdgeControlService {
+  // SetConfig replaces the whole configuration. When it cannot be applied the
+  // response says why and the previous configuration stays in effect.
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+  // Snapshot returns the traffic counters and the egress member health.
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  // Health returns the generation of the edge process (see
+  // EdgeConfig.generation), the addresses it is bound to, whether its DNS
+  // forwarder runs and the version of its binary.
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Drain closes the listeners, waits for the active connections for at most
+  // max_seconds, then lets the process exit.
+  rpc Drain(DrainRequest) returns (DrainResponse);
+}
+
+message EdgeConfig {
+  // generation is the generation of the edge process the configuration is
+  // for: the N of its container, postern-edge-g<N>, and of its files,
+  // config-g<N>.json and edge-g<N>.sock. The first configuration an edge
+  // process applies gives the process its generation for life; it refuses a
+  // configuration for any other one, since a new generation is a new process
+  // (spec 7).
+  uint64 generation = 1;
+  repeated EdgeListener listeners = 2;
+  repeated Route routes = 3;
+  repeated SocksPort socks = 4;
+  repeated Chain chains = 5;
+  repeated string blacklist_cidrs = 6;
+  repeated string mask_domains = 7;
+  HealthCheck health = 8;
+  uint32 device_idle_seconds = 9;
+  repeated TestListener test_listeners = 10;
+  // certs are the certificates of the WEB proxies, one per domain: a
+  // connection for the server name of a route of kind "web" is served the
+  // certificate of that name. The edge reads it from the node's certificate
+  // directory when the domain first comes, and again whenever its generation
+  // changes (see CertRef). A web route whose name has no certificate here, or
+  // one that cannot be read, that is not valid for the name or not valid now,
+  // is answered with the TLS alert unrecognized_name. An edge older than this
+  // field leaves them out.
+  repeated CertRef certs = 11;
+  Dns dns = 12;
+  // me_addrs are the addresses of Telegram's middle proxies, as the agent
+  // reads them from getProxyConfig and getProxyConfigV6: "ip:port", an IPv6
+  // address in brackets. An engine does not say which of its connections go
+  // to the middle proxy (telemt gives them no scope), so a CONNECT to a SOCKS
+  // port without a scope whose target is one of these addresses and ports is
+  // taken for one of scope "me"; a scope the engine gives wins. The port
+  // counts: a middle proxy may be on the address of a datacenter, at another
+  // port. An edge older than this field leaves them out.
+  repeated string me_addrs = 13;
+  // probe_routes are the routes of the node's own probes: a connection from
+  // the loopback to a test listener takes the probe route of its listener and
+  // server name, when there is one, in place of the listener's route; no other
+  // connection sees them, and they have no limits and no counters. The agent
+  // probes a new engine generation through them before the route of its
+  // proxy moves to it (spec 5.5). An edge older than this field leaves them
+  // out.
+  repeated Route probe_routes = 14;
+  // probe_sources are the exact IP addresses of the panel's probes
+  // (NodeSettings.probe_sources, Ruling R6-1): a connection of a public
+  // listener, never of a test listener, whose TCP source is one of them takes
+  // a route of a proxy without its limits while the proxy has fewer than 4 of
+  // them open (a fifth is an ordinary client): no device slot, no device,
+  // total or per-IP limit, no IP counter; its bytes and its connection count
+  // in the totals of the proxy, and it is closed 30 s after its accept. The
+  // blacklist and the caps on connections before their hello still apply. An
+  // entry that is not a single IP address (a prefix, a zone, a name) is
+  // ignored, and logged. An edge older than this field leaves them out.
+  repeated string probe_sources = 15;
+}
+
+// Dns is the DNS forwarder of the node: a resolver on 127.0.0.2:53, UDP and
+// TCP, that the containers of the node use instead of the nameservers of the
+// host, whose UDP port 53 may be blocked. It never recurses itself: it asks the
+// DNS-over-HTTPS endpoints, and the nameservers of the host as well when those
+// fail or have not answered within 1.5 s.
+message Dns {
+  bool enabled = 1;
+  // doh_urls are the DNS-over-HTTPS endpoints (RFC 8484), https URLs whose
+  // host is an IP address: no name is looked up to reach them. Empty means
+  // the default endpoints.
+  repeated string doh_urls = 2;
+  // fallback are the nameservers of the host, "ip" (port 53) or "ip:port",
+  // asked over UDP and then TCP when the DNS-over-HTTPS endpoints fail or are
+  // slow.
+  repeated string fallback = 3;
+}
+
+message EdgeListener {
+  string id = 1;
+  string bind_ip = 2;
+  uint32 port = 3;
+  // kind is one of "tls", "http-upstream". A tls listener reads the
+  // ClientHello of every connection and routes it by its server name. An
+  // http-upstream listener takes plain HTTP from the web servers in front of
+  // it (trusted_cidrs), for WEB proxies placed under a path of their sites,
+  // and routes every request by its Host.
+  string kind = 4;
+  // stranger_action is one of "mask", "reject", "drop".
+  string stranger_action = 5;
+  string mask_target = 6;
+  // non_tls_action is one of "drop", "http400".
+  string non_tls_action = 7;
+  // trusted_cidrs are, for an http-upstream listener, the addresses of the
+  // web servers in front of it: a connection from any other address is closed
+  // as it is accepted, and the last address of the X-Forwarded-For of a
+  // request is taken for its client only from these. Empty trusts nobody. A
+  // tls listener does not look at them.
+  repeated string trusted_cidrs = 8;
+  reserved 9;
+  reserved "unbound";
+}
+
+message Route {
+  string listener_id = 1;
+  // sni is the server name of the route; for a route of an http-upstream
+  // listener, the Host of its requests.
+  string sni = 2;
+  string proxy_id = 3;
+  // kind is one of "engine", "web", "mgmt". The connections of an engine or
+  // mgmt route are relayed as they are; those of a web route have their TLS
+  // terminated by the edge (or come as plain HTTP to an http-upstream
+  // listener), and their requests are proxied over HTTP/1.1 to backend.
+  string kind = 4;
+  // backend is the address, "ip:port", of the engine, the WEB listener of an
+  // engine, or the agent that the route leads to.
+  string backend = 5;
+  // proxy_protocol puts a PROXY v2 header, which names the client, before
+  // what a relayed connection sends. It is ignored on a web route: the
+  // requests of a web route name their client in X-Forwarded-For.
+  bool proxy_protocol = 6;
+  EdgeLimits limits = 7;
+}
+
+message EdgeLimits {
+  uint32 devices = 1;
+  uint32 conns_total = 2;
+  uint32 conns_per_ip = 3;
+}
+
+message SocksPort {
+  uint32 port = 1;
+  string proxy_id = 2;
+  string default_chain_id = 3;
+  map<string, string> scope_chains = 4;
+}
+
+message Chain {
+  string id = 1;
+  repeated ChainMember members = 2;
+}
+
+message ChainMember {
+  string key = 1;
+  // kind is one of "direct", "socks5", "http".
+  string kind = 2;
+  string addr = 3;
+  string username = 4;
+  // password is a credential of the egress. Never log it.
+  string password = 5;
+  string bind_device = 6;
+  string bind_ip = 7;
+}
+
+message HealthCheck {
+  uint32 interval_seconds = 1;
+  uint32 timeout_seconds = 2;
+  uint32 fail_threshold = 3;
+  uint32 recover_threshold = 4;
+  repeated string dc_addrs = 5;
+  repeated string echo_urls = 6;
+}
+
+message TestListener {
+  uint32 port = 1;
+  string listener_id = 2;
+}
+
+// CertRef names the certificate of a WEB domain, which the node keeps as
+// <domain>/fullchain.pem and <domain>/privkey.pem in its certificate
+// directory. The agent raises generation whenever it writes new files for the
+// domain; the edge reads them again only then, without touching its listeners
+// or the connections it serves, and keeps serving the certificate it has
+// while new files cannot be read.
+message CertRef {
+  string domain = 1;
+  uint64 generation = 2;
+}
+
+message SetConfigRequest {
+  EdgeConfig config = 1;
+}
+
+message SetConfigResponse {
+  bool applied = 1;
+  string error = 2;
+  // listener_failures are the listeners of the applied configuration that
+  // could not be bound. They fail nothing else: the configuration is in
+  // effect, the other listeners serve, and the edge tries the failed ones
+  // again (every 30 s, doubling to 5 min, and on every SetConfig) until they
+  // bind. Empty from an edge older than this field, which refused a
+  // configuration with such a listener instead.
+  repeated ListenerFailure listener_failures = 3;
+}
+
+// ListenerFailure is a listener of the configuration in effect that the edge
+// could not bind: its port is held by a process that does not share it, or
+// its address is not on the host any more.
+message ListenerFailure {
+  string listener_id = 1;
+  // reason is the error of the bind, with the address and port, and no
+  // secret.
+  string reason = 2;
+}
+
+message SnapshotRequest {
+  // include_ips asks for the counters of the client IPs (SnapshotResponse.ips),
+  // which are left out, and not even gathered, otherwise: the agent asks for
+  // them only when the IP policy of the node lets it keep client addresses.
+  bool include_ips = 1;
+}
+
+message SnapshotResponse {
+  uint64 generation = 1;
+  repeated ProxyCounters proxies = 2;
+  // ips are the counters of the client IPs, when the request asked for them.
+  repeated IpCounters ips = 3;
+  repeated MemberHealth health = 4;
+  int64 ts_unix_nano = 5;
+  // refused_prehello counts the connections of the public listeners closed as
+  // they were accepted, since the edge started, because the connections that
+  // had not sent their whole ClientHello yet were at a cap: that of the
+  // client's source (its IPv4 address, its IPv6 /64), or that of the whole
+  // edge while as many connections evicted from it were still on their way
+  // out.
+  uint64 refused_prehello = 6;
+  // refused_total counts the connections of the public listeners closed as
+  // they were accepted, since the edge started, because the edge held as many
+  // connections of its public listeners as it may.
+  uint64 refused_total = 7;
+  // evicted_prehello counts the connections of the public listeners that had
+  // not sent their whole ClientHello yet and were closed, since the edge
+  // started, to make room for a new one: the edge had as many of them as it
+  // may, and the oldest made way.
+  uint64 evicted_prehello = 8;
+}
+
+// ProxyCounters are the counters of one proxy. A connection of a route of a
+// tls listener, relayed or web, is the TCP connection of the client, whatever
+// requests or HTTP/2 streams it carries. The edge never sees the TCP
+// connections of the clients of an http-upstream listener, only their
+// requests: for its routes, conns_total and conns_active count requests (a
+// WebSocket for as long as it lasts), and so do the limits of the proxy.
+message ProxyCounters {
+  string proxy_id = 1;
+  uint64 bytes_up = 2;
+  uint64 bytes_down = 3;
+  uint64 conns_total = 4;
+  uint32 conns_active = 5;
+  uint32 devices_active = 6;
+  // backend_active counts, by backend address ("ip:port"), what is under
+  // way with each backend: the relayed connections of an engine route, and
+  // the WEB requests in flight (a WebSocket while it is open) of a web route
+  // or an http-upstream listener. A web connection between its requests
+  // keeps no backend busy.
+  map<string, uint32> backend_active = 7;
+}
+
+message IpCounters {
+  string proxy_id = 1;
+  string ip = 2;
+  uint32 conns_active = 3;
+  int64 last_seen_unix = 4;
+  uint64 bytes = 5;
+}
+
+message MemberHealth {
+  string chain_id = 1;
+  string member_key = 2;
+  // status is one of "unknown", "up", "down".
+  string status = 3;
+  uint32 latency_ms = 4;
+  string exit_ip = 5;
+  int64 checked_unix = 6;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  // generation is the generation of the edge process: that of the first
+  // configuration it applied, 0 before it has one.
+  uint64 generation = 1;
+  bool listening = 2;
+  repeated string bound = 3;
+  // dns is true when the DNS forwarder runs: it is enabled and bound to
+  // 127.0.0.2:53.
+  bool dns = 4;
+  // version is the release version of the binary the edge process runs, as
+  // the agent reports its own (agent_version of the node's GetInfo). An edge
+  // runs the binary the agent ran when it made the edge, so after an update
+  // of the node it is older than the agent's until the edge is rolled. Empty
+  // from an edge older than this field.
+  string version = 5;
+  // listener_failures are the listeners of the configuration in effect that
+  // are not bound now (see SetConfigResponse.listener_failures); bound has
+  // the others. Empty from an edge older than this field.
+  repeated ListenerFailure listener_failures = 6;
+}
+
+message DrainRequest {
+  uint32 max_seconds = 1;
+}
+
+message DrainResponse {}

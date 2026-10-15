@@ -1,0 +1,44 @@
+debug = false
+secret = "ee00112233445566778899aabbccddeeff7777772e6578616d706c652e636f6d"
+bind-to = "127.0.0.1:20123"
+proxy-protocol-listener = true
+concurrency = 8192
+prefer-ip = "prefer-ipv4"
+auto-update = false
+tolerate-time-skewness = "2m"
+allow-fallback-on-unknown-dc = false
+
+[domain-fronting]
+ip = "203.0.113.80"
+port = 443
+
+[network]
+dns = ""
+proxies = ["socks5://127.0.0.1:30123"]
+
+[network.timeout]
+tcp = "5s"
+http = "10s"
+idle = "5m"
+handshake = "10s"
+
+[defense.anti-replay]
+enabled = true
+
+[defense.blocklist]
+enabled = false
+
+[defense.allowlist]
+enabled = false
+
+[defense.doppelganger]
+urls = []
+
+[stats.statsd]
+enabled = false
+
+[stats.prometheus]
+enabled = true
+bind-to = "127.0.0.1:25123"
+http-path = "/"
+metric-prefix = "mtg"

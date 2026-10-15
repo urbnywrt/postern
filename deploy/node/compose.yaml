@@ -1,0 +1,43 @@
+# The Postern node agent. install.sh copies this file to /opt/postern/compose.yaml
+# and starts it with:  docker compose -f /opt/postern/compose.yaml up -d
+#
+# This is the only service compose manages. The agent creates everything else
+# (the edge, the proxy engines, the egress containers) through the Docker socket.
+#
+# The container is a stock runner image plus the volume: the node binary is
+# /opt/postern/bin/current, and bin/launcher.sh decides which version of it runs
+# (see launcher.sh for the rollback and the healthy-marker contract). /opt/postern
+# is mounted at the same path as on the host because the agent hands host paths to
+# Docker when it creates the other containers.
+name: postern
+
+services:
+  postern-agent:
+    container_name: postern-agent
+    # The runner image of every node container, pinned by digest.
+    image: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+    entrypoint: ["/opt/postern/bin/launcher.sh", "agent"]
+    environment:
+      POSTERN_HOME: /opt/postern
+    # The management port (mTLS) listens on the host's interfaces.
+    network_mode: host
+    # The host's process table, read only to find out who owns a port.
+    pid: host
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/postern:/opt/postern
+      # The host's os-release for GetInfo; inside the container /etc/os-release is Alpine's.
+      - /etc/os-release:/host/etc/os-release:ro
+    labels:
+      postern.managed: "true"
+      postern.role: agent
+      postern.id: agent
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

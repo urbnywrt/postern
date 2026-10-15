@@ -1,0 +1,329 @@
+name: CI
+
+# Runs on GitHub Actions and on Gitea Actions (which also reads .github/workflows).
+# Apart from the lint, which has an action of its own, the jobs use no action but
+# checkout, setup-go and setup-node; a step that needs Docker says so and does
+# nothing on a runner without it. The secret scan needs no Docker and is never
+# skipped: when it cannot run, or cannot see the whole history, it fails.
+# A push runs on main and dev only: a branch with a pull request runs as the
+# pull request, not twice. A newer run of the same pull request or branch
+# cancels the one before it.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The runner image of every Postern container (deploy/node/compose.yaml).
+  RUNNER_IMAGE: alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Vet
+        run: go vet ./...
+      - name: Vet the end-to-end and integration tests
+        # They are built with their tags only, so the step above does not see them.
+        run: go vet -tags e2e,integration ./...
+      - name: Test
+        # The store package alone takes some ten minutes with -race on a runner.
+        run: go test -race -timeout 30m ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14
+          # The tags add the end-to-end and integration tests; no file of the
+          # repository is left out by them, so this run covers the plain one.
+          # .golangci.yml adds gosec and nolintlint to the standard linters.
+          args: --build-tags e2e,integration
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Licences
+        # The licence of every module that the binaries are built from has to
+        # be one that goes with the AGPL-3.0 of Postern; the module itself is
+        # left out. The web job checks the packages of the UI with the same
+        # list, where 0BSD (tslib), which asks for nothing at all, is needed.
+        run: >-
+          go run github.com/google/go-licenses/v2@v2.0.1 check ./...
+          --ignore github.com/urbnywrt/postern
+          --allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-3-Clause,MIT,ISC,MPL-2.0,0BSD
+
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Runner image
+        # For the parts of the tests that run busybox of the runner image;
+        # install_test.sh does not pull it itself.
+        run: |
+          if docker info > /dev/null 2>&1; then
+            docker pull "$RUNNER_IMAGE"
+          else
+            echo "No Docker on this runner: the parts of the tests that need it are skipped, and say so."
+          fi
+      - name: Node installer
+        run: bash deploy/node/install_test.sh
+      - name: Node launcher
+        run: sh deploy/node/launcher_test.sh
+      - name: Panel launcher
+        run: sh deploy/panel/launcher_test.sh
+      - name: Panel compose file
+        # Without docker compose it says so and is skipped.
+        run: sh deploy/panel/compose_test.sh
+      - name: Panel entrypoint
+        # It has to run as root: in the runner image, which proves that it works
+        # with busybox, or else as root here (without the case that plants a
+        # link to /etc, which only a container may try). Without root it says
+        # that it is skipped.
+        run: |
+          if docker info > /dev/null 2>&1; then
+            docker run --rm -v "$PWD:/src:ro" "$RUNNER_IMAGE" sh /src/deploy/panel/entrypoint_test.sh
+          elif [ "$(id -u)" -eq 0 ]; then
+            sh deploy/panel/entrypoint_test.sh
+          elif sudo -n true 2> /dev/null; then
+            sudo sh deploy/panel/entrypoint_test.sh
+          else
+            sh deploy/panel/entrypoint_test.sh
+          fi
+      - name: Launchers with busybox
+        # The launchers run under busybox ash in the runner image.
+        run: |
+          if docker info > /dev/null 2>&1; then
+            for t in deploy/node/launcher_test.sh deploy/panel/launcher_test.sh; do
+              docker run --rm -v "$PWD:/src:ro" "$RUNNER_IMAGE" sh "/src/$t"
+            done
+          else
+            echo "No Docker on this runner: the launchers are not tested with busybox."
+          fi
+      - name: Git hooks
+        run: bash scripts/test-hooks.sh
+      - name: End-to-end script
+        run: bash scripts/e2e_test.sh
+      - name: Stable list job
+        # The secrets of signing reach only the job that signs (stable.yml).
+        run: bash scripts/stable_test.sh
+
+  image:
+    name: Panel and node images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build
+        # Built, not pushed: the web UI, the panel, the node kit for amd64 and
+        # arm64, and the image. Then the panel says its version, and the kit
+        # is where the panel looks for it.
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "No Docker on this runner: the panel image is not built."
+            exit 0
+          fi
+          docker build -f deploy/panel/Dockerfile -t postern-panel:ci .
+          docker run --rm postern-panel:ci version
+          docker run --rm --entrypoint ls postern-panel:ci -l \
+            /usr/local/share/postern/node-kit/install.sh /usr/local/share/postern/node-kit/launcher.sh \
+            /usr/local/share/postern/node-kit/compose.yaml /usr/local/share/postern/node-kit/amd64/postern-node \
+            /usr/local/share/postern/node-kit/arm64/postern-node
+      - name: Node image
+        # Built of the source, not pushed: postern-node says the version that
+        # it was built with, and the image starts it as bootstrap, with the
+        # labels of a Postern container and POSTERN_HOME.
+        run: |
+          if ! docker info > /dev/null 2>&1; then
+            echo "No Docker on this runner: the node image is not built."
+            exit 0
+          fi
+          docker build -f deploy/node/Dockerfile --build-arg VERSION=v0.0.0-ci -t postern-node:ci .
+          version=$(docker run --rm postern-node:ci version)
+          echo "$version"
+          case $version in
+            "v0.0.0-ci ("*) ;;
+            *) echo "the node image says $version, not v0.0.0-ci" >&2; exit 1 ;;
+          esac
+          check() {
+            got=$(docker image inspect --format "$1" postern-node:ci)
+            if [ "$got" != "$2" ]; then
+              echo "the node image has $1 = $got, want $2" >&2
+              exit 1
+            fi
+          }
+          check '{{json .Config.Entrypoint}}' '["/usr/local/lib/postern/postern-node"]'
+          check '{{json .Config.Cmd}}' '["bootstrap"]'
+          check '{{index .Config.Labels "postern.managed"}}' true
+          check '{{index .Config.Labels "postern.role"}}' agent
+          check '{{index .Config.Labels "postern.id"}}' agent
+          check '{{index .Config.Labels "org.opencontainers.image.version"}}' v0.0.0-ci
+          check '{{range .Config.Env}}{{if eq . "POSTERN_HOME=/opt/postern"}}{{.}}{{end}}{{end}}' POSTERN_HOME=/opt/postern
+          docker run --rm --entrypoint ls postern-node:ci -l \
+            /usr/local/lib/postern/postern-node /usr/local/lib/postern/launcher.sh \
+            /etc/ssl/certs/ca-certificates.crt
+      - name: Release build and its image
+        # scripts/release.sh on a copy of this commit, as the release workflow
+        # runs it (build, then sign with a key that the test makes, which
+        # refuses files that the build did not make) and as a workstation does,
+        # and the images of the signed binaries (--build-arg PREBUILT=dist),
+        # which have to hold them and their signatures byte for byte (the node
+        # kit of the panel image, the node binary of the node image): see
+        # scripts/release/integration_test.go. Without Docker the images are
+        # left out, and the test says so.
+        run: go test -tags integration -count=1 -timeout 30m -run '^TestReleaseScript$' -v ./scripts/release/
+
+  e2e:
+    name: End-to-end
+    # Docker on the runner itself: the test shares the host network and the file
+    # system with the containers of the node that it starts (see test/e2e). The
+    # runners of GitHub have that. Elsewhere (Gitea Actions) the job runs only
+    # where the repository variable POSTERN_E2E is 1, on a runner in host mode:
+    # see docs/testing/e2e.md.
+    if: github.server_url == 'https://github.com' || vars.POSTERN_E2E == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: End-to-end test
+        # The panel, a node agent in Docker, the edge and telemt (downloaded from
+        # GitHub by the panel), and a fake-TLS client through the edge; and the
+        # changes of versions without downtime (TestVersions). scripts/e2e.sh
+        # makes a throwaway release key and builds the binaries with it.
+        run: bash scripts/e2e.sh
+
+  proto:
+    name: Proto
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # buf breaking compares against the main branch
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Lint
+        run: go tool buf lint
+      - name: Breaking changes
+        # Nothing to compare against until the first release is on main.
+        continue-on-error: true
+        run: |
+          # buf reads a local branch, and the checkout only has origin/main.
+          git rev-parse --verify --quiet refs/heads/main >/dev/null || git branch main origin/main
+          go tool buf breaking --against '.git#branch=main'
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test -- --run
+      - name: Build
+        run: npm run build
+      - name: Licences
+        # The packages that the UI is built from and that the panel serves
+        # (the production dependencies; the tools of the build are not
+        # shipped), with the list of licences of the Go modules.
+        run: >-
+          npx --yes license-checker-rseidelsohn@5.0.1 --production --excludePrivatePackages --summary
+          --onlyAllow 'Apache-2.0;BSD-2-Clause;BSD-3-Clause;MIT;ISC;MPL-2.0;0BSD'
+
+  secrets:
+    name: Secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # scan the whole history, not just the last commit
+      - name: Scan the history
+        # gitleaks 8.28.0, the version of .githooks/pre-commit (the [[allowlists]]
+        # of .gitleaks.toml need 8.25 or later), from its release archive, which
+        # has to match the SHA-256 below. Not gitleaks-action, which is made for
+        # GitHub, and not its Docker image, which a Gitea job container usually
+        # cannot run: this needs only curl, tar, sha256sum and git. The step has
+        # no way to pass without scanning the whole history: whatever goes wrong
+        # (a shallow checkout, the download, the checksum, the scan, its output)
+        # fails it.
+        run: |
+          set -eu
+          version=8.28.0
+          # The SHA-256 sums below are those of
+          # https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_checksums.txt
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)
+              arch=x64
+              sha256=a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb ;;
+            Linux-aarch64 | Linux-arm64)
+              arch=arm64
+              sha256=eff65261156100e5d94a6b3dec313d532fddfe19ae1590bf7a2b4f2699128356 ;;
+            *)
+              echo "gitleaks is pinned for Linux on x86_64 and arm64, not for $(uname -s) on $(uname -m): the history cannot be scanned." >&2
+              exit 1 ;;
+          esac
+          for tool in curl tar sha256sum git; do
+            command -v "$tool" > /dev/null 2>&1 || { echo "$tool is not on this runner: the history cannot be scanned." >&2; exit 1; }
+          done
+          # safe.directory: the checkout may belong to another user than this one.
+          dir=$(pwd -P)
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=$dir
+          # A shallow checkout hides most of the history. Only "false" passes: a
+          # git older than 2.15 does not know the question and answers with it.
+          [ "$(git rev-parse --is-shallow-repository)" = false ] || { echo "the checkout is shallow, or git cannot say that it is not: the secret scan needs the whole history (fetch-depth: 0)" >&2; exit 1; }
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          archive=gitleaks_${version}_linux_${arch}.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 3 --max-time 300 \
+            --output "$tmp/$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${archive}"
+          echo "$sha256  $tmp/$archive" | sha256sum -c -
+          tar -xzf "$tmp/$archive" -C "$tmp" gitleaks
+          status=0
+          "$tmp/gitleaks" git --config .gitleaks.toml --no-banner --no-color --redact --verbose --exit-code 1 . \
+            > "$tmp/scan.log" 2>&1 || status=$?
+          cat "$tmp/scan.log"
+          [ "$status" -eq 0 ] || exit "$status"
+          # A git that fails is only an error line to gitleaks, which then scans
+          # nothing and exits 0: what it did is looked at too.
+          if grep -q ' ERR ' "$tmp/scan.log" || ! grep -Eq '[1-9][0-9]* commits scanned' "$tmp/scan.log"; then
+            echo "The scan did not cover the history, so it is no pass." >&2
+            exit 1
+          fi

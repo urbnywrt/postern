@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// JoinService lets a new node join the panel with a key of its own. The node
+// makes an ECDSA P-256 key, sends a certificate request for it with the join
+// token that the panel gave the admin, and gets back its certificate and the
+// CA of the panel. The private key never leaves the node.
+//
+// Join can be called without a session: the token is the credential. Its
+// failures are limited per client address as sign-ins are.
+//
+// Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: the token is not valid, has expired or was used
+//     already.
+//   - INVALID_ARGUMENT: the certificate request, the architecture or the
+//     version is not acceptable.
+//   - RESOURCE_EXHAUSTED: too many failed attempts from the address; the
+//     Retry-After metadata says how many seconds to wait.
+service JoinService {
+  // Join consumes a join token and issues the node's certificate. A repeated
+  // call with the same token and a request for the same key, before the token
+  // expires, returns the same certificate, so a node whose answer was lost
+  // can ask again.
+  rpc Join(JoinRequest) returns (JoinResponse);
+}
+
+message JoinRequest {
+  // token is the join token: 32 random bytes in unpadded base64url.
+  string token = 1;
+  // csr is a PKCS #10 certificate request in DER, at most 8 KiB, for an ECDSA
+  // P-256 key. Only its key is used: its subject and extensions are ignored.
+  bytes csr = 2;
+  // arch is the architecture of the node: amd64 or arm64.
+  string arch = 3;
+  // version is the version of the node agent.
+  string version = 4;
+}
+
+message JoinResponse {
+  // node_id is the id of the node, which its certificate names.
+  string node_id = 1;
+  // mgmt_port is the port the agent listens on for the panel.
+  uint32 mgmt_port = 2;
+  // ca_pem is the CA certificate of the panel, PEM.
+  bytes ca_pem = 3;
+  // cert_pem is the server certificate of the node, PEM.
+  bytes cert_pem = 4;
+}

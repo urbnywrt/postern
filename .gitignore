@@ -1,0 +1,42 @@
+# Build outputs
+/bin/
+/dist/
+/web/dist/
+# Built web UI embedded into the panel; only the placeholder page is committed
+/internal/panel/webui/dist/*
+!/internal/panel/webui/dist/index.html
+node_modules/
+*.test
+*.out
+coverage.*
+
+# Local runtime data and secrets: never commit
+.env
+.env.*
+!.env.example
+/data/
+# What deploy/panel/compose.yaml makes next to itself when it is run in place
+/deploy/panel/data/
+/deploy/panel/keys/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.key
+*.pem
+*.crt
+*.p12
+master.key
+
+# Agent workflow scratch (ledgers, briefs, review packages)
+/.superpowers/
+
+# Personal deny-list of real hosts/IPs: lives outside the repo, ignored just in case
+.postern-denylist
+
+# Editors and OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

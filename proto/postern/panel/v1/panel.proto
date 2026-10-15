@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// HealthService is the liveness probe of the panel API. The other panel
+// services are added to this package by later changes.
+service HealthService {
+  rpc Check(CheckRequest) returns (CheckResponse);
+}
+
+message CheckRequest {}
+
+message CheckResponse {}

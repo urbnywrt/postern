@@ -1,0 +1,55 @@
+{
+  "log": {
+    "access": "none",
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "in-0123456789ab",
+      "listen": "127.0.0.1",
+      "port": 35001,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      "tag": "out-0123456789ab",
+      "protocol": "trojan",
+      "settings": {
+        "servers": [
+          {
+            "address": "198.51.100.7",
+            "port": 8443,
+            "password": "pass-pass-pass"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "trojan.example.com",
+          "fingerprint": "chrome"
+        }
+      }
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "in-0123456789ab"
+        ],
+        "outboundTag": "out-0123456789ab"
+      }
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run a command line in the project's Linux environment.
+#
+#   bash scripts/wsl 'go test ./...'
+#
+# On Linux (including inside WSL) the command runs in a login shell, so the Go
+# toolchain that ~/.profile puts on PATH is available.
+#
+# From Git Bash on Windows the command is forwarded to the WSL distro "Ubuntu",
+# in the directory that corresponds to the current one (C:/x/y -> /mnt/c/x/y).
+#
+# The whole command line is handed to `bash -lc` as a single argument through
+# `wsl.exe --exec`. Plain `wsl.exe -- <cmd>` would first re-parse the line in a
+# non-login shell inside WSL, which expands $VARS and $(...) too early (before
+# the login profile has set up PATH) and mangles double quotes.
+set -eu
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: bash scripts/wsl '<command>'" >&2
+  exit 2
+fi
+
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    win_dir=$(pwd -W)
+    case "$win_dir" in
+      [A-Za-z]:*) ;;
+      *)
+        echo "scripts/wsl: cannot map '$win_dir' to a WSL path" >&2
+        exit 2
+        ;;
+    esac
+    drive=$(printf '%s' "${win_dir%%:*}" | tr '[:upper:]' '[:lower:]')
+    wsl_dir="/mnt/${drive}${win_dir#*:}"
+    MSYS_NO_PATHCONV=1 exec wsl.exe -d Ubuntu --cd "$wsl_dir" --exec bash -lc "$*"
+    ;;
+  *)
+    exec bash -lc "$*"
+    ;;
+esac

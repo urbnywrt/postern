@@ -1,0 +1,61 @@
+# The Postern panel. From this directory:
+#
+#   docker compose up -d --build
+#   docker compose logs postern-panel      # the URL of the first setup is in here
+#
+# ./data (the database) and ./keys (the master key) are made here on the first
+# start. Keep a copy of ./keys apart from every backup of ./data: the key opens
+# the secrets in the database, and without it they are lost.
+#
+# WARNING: the panel speaks plain HTTP, and with the defaults below its port is
+# published on every interface of the host, IPv4 and IPv6. The setup token, the
+# admin password and the session cookie then cross the network in the clear. For
+# anything but a trusted network put a TLS reverse proxy in front of the panel,
+# or reach it through an SSH tunnel, and publish the port on the loopback only:
+# POSTERN_BIND=127.0.0.1 (see README.md).
+#
+# POSTERN_BIND is the address of the host that the port is published on: every
+# interface, IPv4 and IPv6, unless POSTERN_BIND is set; an IPv6 address goes in
+# brackets. POSTERN_PORT is the port on the host. POSTERN_TRUSTED_PROXIES is for a
+# reverse proxy in front of the panel, see README.md. POSTERN_IMAGE names an image
+# that was built or pulled elsewhere; without it, the image is built from this
+# repository. POSTERN_NODE_IMAGE names the image of the node that the panel
+# installs nodes from (see README.md). compose_test.sh checks how the port is
+# published and what is passed to the container.
+name: postern-panel
+
+services:
+  postern-panel:
+    container_name: postern-panel
+    image: ${POSTERN_IMAGE:-postern-panel:latest}
+    build:
+      context: ../..
+      dockerfile: deploy/panel/Dockerfile
+    ports:
+      # Without POSTERN_BIND the port has no host address, and Docker publishes
+      # it on 0.0.0.0 and [::]; an explicit 0.0.0.0 would leave IPv6 out.
+      - "${POSTERN_BIND:+${POSTERN_BIND}:}${POSTERN_PORT:-8080}:8080"
+    environment:
+      # Empty means the default: the loopback only.
+      POSTERN_TRUSTED_PROXIES: ${POSTERN_TRUSTED_PROXIES:-}
+      # The node image of the one-command install of a node; empty means the
+      # default of the image, if it has one.
+      POSTERN_NODE_IMAGE: ${POSTERN_NODE_IMAGE:-}
+    volumes:
+      - ./data:/data
+      - ./keys:/keys
+    restart: unless-stopped
+    # The panel writes to /data and /keys, and to /tmp (SQLite's temporary files).
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # A stop lets the requests that are running finish, and then closes the
+    # database; the default 10 seconds would be cutting it fine.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -1,0 +1,5 @@
+LISTEN 0      511          0.0.0.0:443        0.0.0.0:*    users:(("nginx",pid=4120,fd=6),("nginx",pid=4093,fd=6))
+LISTEN 0      4096         0.0.0.0:8443       0.0.0.0:*    users:(("docker-proxy",pid=3900,fd=4))
+LISTEN 0      511        127.0.0.1:8088       0.0.0.0:*    users:(("nginx",pid=4120,fd=7),("nginx",pid=4093,fd=7))
+LISTEN 0      4096         0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=800,fd=3))
+LISTEN 0      4096            [::]:8443          [::]:*    users:(("docker-proxy",pid=3907,fd=4))

@@ -1,0 +1,492 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+import "postern/panel/v1/nodes.proto";
+
+// EgressService keeps the egresses: the ways out to Telegram that the egress
+// chains of the nodes are made of. An egress is of one kind, which is set when
+// it is made:
+//
+//   - direct: out of the node itself, through one of its interfaces
+//     (interface) or from one of its addresses (bind_ip) when they are set;
+//   - socks5, http: through a SOCKS5 proxy or an HTTP proxy that takes CONNECT
+//     (addr, username, password);
+//   - xray-uri: through the server of a share link (uri: vless://, vmess://,
+//     trojan:// or ss://), which Xray runs on the node;
+//   - xray-subscription: through the servers of a subscription (url): all of
+//     them, the first, or those whose name holds a text (select "all", "first"
+//     or "name:<text>"). Xray runs them on the node, which fetches the
+//     subscription every 6 hours, and at once when RefreshSubscription asks;
+//   - warp: through a WARP device of Cloudflare that the node registers for
+//     itself, which Xray runs on the node;
+//   - psiphon: through Psiphon, out of a country (country), which Psiphon's
+//     own client (psiphon-tunnel-core, which Postern builds) runs on the node,
+//     with the partner ids of the operator when they are set
+//     (propagation_channel_id, sponsor_id). It is experimental.
+//
+// An egress belongs to a node, which alone can use it, or to none, and then
+// every node can. Its parameters are sealed in the database. The secrets among
+// them are never returned: the password of a socks5 or http egress, the share
+// link of an xray-uri egress and the URL of a subscription, which often holds a
+// token, are only ever sent to the panel (Egress shows whether there is a
+// password, and the scheme and the host of a link or a URL).
+//
+// A change that changes the desired states of nodes (it changes an egress that
+// a chain they use has) raises their desired generations, and the panel sends
+// them their new states. A change after which a node would refuse its state is
+// refused, and so is one that needs what a node cannot do yet: "upgrade node
+// <name> to use <feature>" (the capabilities that the node reports).
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a share link
+//     that cannot be read, or a parameter that the kind does not have;
+//   - NOT_FOUND: there is no such egress or node;
+//   - FAILED_PRECONDITION: DeleteEgress of an egress that a chain has,
+//     RefreshSubscription of an egress that is not a subscription, or a change
+//     that a node would refuse or cannot take, for a reason that the message
+//     gives.
+service EgressService {
+  // ListEgresses returns the egresses, or those that one node can use, in the
+  // order they were made.
+  rpc ListEgresses(ListEgressesRequest) returns (ListEgressesResponse);
+
+  // GetEgress returns one egress.
+  rpc GetEgress(GetEgressRequest) returns (GetEgressResponse);
+
+  // CreateEgress makes an egress. No chain has it yet.
+  rpc CreateEgress(CreateEgressRequest) returns (CreateEgressResponse);
+
+  // UpdateEgress changes the name or the parameters of an egress. Its kind and
+  // its node stay what they are.
+  rpc UpdateEgress(UpdateEgressRequest) returns (UpdateEgressResponse);
+
+  // DeleteEgress deletes an egress that no chain has.
+  rpc DeleteEgress(DeleteEgressRequest) returns (DeleteEgressResponse);
+
+  // ValidateEgress says whether the panel takes the parameters of an egress,
+  // without storing anything. It reads them as the panel does (a share link
+  // with the parser of the node, the URL of a subscription by its form); it
+  // does not reach a server. Whether one answers the nodes tell: their health
+  // reports (GetNodeEgressHealth) and events.
+  rpc ValidateEgress(ValidateEgressRequest) returns (ValidateEgressResponse);
+
+  // RefreshSubscription asks every node that runs a subscription to fetch it
+  // again at once, instead of at its next refresh.
+  rpc RefreshSubscription(RefreshSubscriptionRequest) returns (RefreshSubscriptionResponse);
+
+  // GetNodeEgressHealth returns the health of the members of the chains of a
+  // node, as the node reported it last.
+  rpc GetNodeEgressHealth(GetNodeEgressHealthRequest) returns (GetNodeEgressHealthResponse);
+
+  // SetNodeDnsMode sets how the containers of a node resolve names: "doh",
+  // through the DNS forwarder of the edge, which asks DNS-over-HTTPS servers
+  // (for nodes where the port of DNS is blocked), or "system", with the
+  // resolver of the host. Empty is the default of the node, doh.
+  rpc SetNodeDnsMode(SetNodeDnsModeRequest) returns (SetNodeDnsModeResponse);
+}
+
+// EgressParams are the parameters of an egress. Each kind has some of them, and
+// a parameter that the kind does not have must be empty:
+//
+//   direct             interface, bind_ip (both may be empty)
+//   socks5, http       addr (host:port), username, password (both may be empty)
+//   xray-uri           uri
+//   xray-subscription  url, select ("all", also what empty means; "first";
+//                      "name:<text>")
+//   warp               none
+//   psiphon            country (two letters)
+//
+// password, uri and url are secrets: they are in requests only, and are empty
+// in every response.
+message EgressParams {
+  // interface is the network interface of the node that a direct egress goes
+  // out through, such as wg0; empty for the one of the default route.
+  string interface = 1;
+  // bind_ip is the address of the node that a direct egress connects from;
+  // empty for the one that the node picks.
+  string bind_ip = 2;
+  // addr is the proxy of a socks5 or http egress, host:port.
+  string addr = 3;
+  // username is the user of the proxy; empty for none. It has at most 255
+  // bytes for socks5, and at most 1024 bytes and no colon for http.
+  string username = 4;
+  // password is the password of the user of the proxy: at most 255 bytes for
+  // socks5, and at most 1024 bytes for http.
+  string password = 5;
+  // uri is the share link of an xray-uri egress.
+  string uri = 6;
+  // url is the http or https URL of the subscription of an xray-subscription
+  // egress.
+  string url = 7;
+  // select picks the servers of a subscription: "all", "first" (the first one
+  // that can be read), or "name:<text>" (those whose name holds the text,
+  // letter case aside).
+  string select = 8;
+  // country is the exit country of a psiphon egress, two letters, one of those
+  // that Postern offers for Psiphon.
+  string country = 9;
+  // propagation_channel_id and sponsor_id are the Psiphon partner ids of a
+  // psiphon egress, 16 hex digits each, both or neither; neither is the ids of
+  // a client without a partner agreement (FFFFFFFFFFFFFFFF).
+  string propagation_channel_id = 10;
+  string sponsor_id = 11;
+}
+
+// Egress is one way out to Telegram.
+message Egress {
+  string id = 1;
+  string name = 2;
+  // kind is direct, socks5, http, xray-uri, xray-subscription, warp or
+  // psiphon.
+  string kind = 3;
+  // node_id is the node that the egress belongs to, which alone can use it;
+  // empty for an egress that every node can use.
+  string node_id = 4;
+  // params are its parameters, without the secrets (see EgressParams).
+  EgressParams params = 5;
+  // masked is what can be shown of the share link of an xray-uri egress or of
+  // the URL of an xray-subscription egress: the scheme and the host, with the
+  // port of a share link (vless://example.com:443, https://sub.example.com).
+  // Empty for the other kinds.
+  string masked = 6;
+  // password_set says whether a socks5 or http egress has a password.
+  bool password_set = 7;
+  // chain_ids are the chains that have the egress as a member.
+  repeated string chain_ids = 8;
+  int64 created_unix = 9;
+  int64 updated_unix = 10;
+}
+
+message ListEgressesRequest {
+  // node_id selects the egresses that the node can use: those of every node,
+  // and its own. Empty for every egress.
+  string node_id = 1;
+}
+
+message ListEgressesResponse {
+  repeated Egress egresses = 1;
+}
+
+message GetEgressRequest {
+  string id = 1;
+}
+
+message GetEgressResponse {
+  Egress egress = 1;
+}
+
+message CreateEgressRequest {
+  // name has 1 to 64 characters.
+  string name = 1;
+  // kind is one of the kinds of Egress.
+  string kind = 2;
+  // node_id makes the egress one of that node; empty for one that every node
+  // can use.
+  string node_id = 3;
+  EgressParams params = 4;
+}
+
+message CreateEgressResponse {
+  Egress egress = 1;
+}
+
+message UpdateEgressRequest {
+  string id = 1;
+  optional string name = 2;
+  // params, when set, are the new parameters, with the rules of
+  // CreateEgressRequest, except that a secret that is empty keeps the one that
+  // is stored: the share link of an xray-uri egress, the URL of an
+  // xray-subscription egress, and the password of a socks5 or http egress
+  // whose address and username stay as they are. A stored password does not
+  // follow a new address or a new username: with either, the password has to
+  // be given again (INVALID_ARGUMENT otherwise); an empty username takes the
+  // password with it.
+  EgressParams params = 3;
+}
+
+message UpdateEgressResponse {
+  Egress egress = 1;
+  // before_run_ids are the diagnostic runs that the panel made before the
+  // change (R6-3), by the id of the node: one of each node whose state the
+  // change changed. Empty when the edit ran no checks.
+  map<string, string> before_run_ids = 2;
+}
+
+message DeleteEgressRequest {
+  string id = 1;
+}
+
+message DeleteEgressResponse {}
+
+message ValidateEgressRequest {
+  // kind is the kind of the egress, as CreateEgressRequest has it.
+  string kind = 1;
+  EgressParams params = 2;
+  // id is the egress whose stored secrets the secrets that params leave empty
+  // are, as UpdateEgress takes them; empty for a new egress.
+  string id = 3;
+}
+
+message ValidateEgressResponse {
+  // valid says whether the panel takes the parameters.
+  bool valid = 1;
+  // problem says why it does not; empty when it does. It never quotes a
+  // secret.
+  string problem = 2;
+  // masked is as Egress has it.
+  string masked = 3;
+  // protocol, security and network are what a share link says: vless, vmess,
+  // trojan or shadowsocks; none, tls or reality; tcp, ws, grpc, xhttp or
+  // httpupgrade. Empty for the other kinds.
+  string protocol = 4;
+  string security = 5;
+  string network = 6;
+}
+
+message RefreshSubscriptionRequest {
+  string id = 1;
+}
+
+message RefreshSubscriptionResponse {
+  // node_ids are the nodes that were asked to fetch it: those that have it in
+  // their states. None when no chain that a node uses has it.
+  repeated string node_ids = 1;
+}
+
+message GetNodeEgressHealthRequest {
+  string node_id = 1;
+}
+
+message GetNodeEgressHealthResponse {
+  // members are the members of the chains of the node, chain by chain, in the
+  // order that the node reported them.
+  repeated EgressMemberHealth members = 1;
+  // reported_unix is when the node reported them, in Unix seconds; 0 when it
+  // has not reported since the panel started.
+  int64 reported_unix = 2;
+  // node_status is the status of the node, as Node.status has it
+  // (provisioning, online, offline or error).
+  string node_status = 3;
+  // stale says that the report says nothing of now: the node is not online,
+  // it has not reported since the panel started, or its report is older than
+  // three intervals of its health checks, and at least 120 seconds (a node
+  // runs one check for all of its chains: that of its default chain, or else
+  // of the first chain that has one; every 30 seconds by default).
+  bool stale = 4;
+}
+
+// EgressMemberHealth is how a member of a chain of a node is doing. A member is
+// an egress, or one server of an egress that has several (a subscription).
+message EgressMemberHealth {
+  // chain_id is the chain, "default" for the chain that a node without a
+  // default chain of its own has (it goes out directly); chain_name is its
+  // name, empty for that one and for a chain that the panel no longer has.
+  string chain_id = 1;
+  string chain_name = 2;
+  // egress_id is the egress, "direct" for the egress of that chain;
+  // egress_name is its name, empty for that one and for an egress that the
+  // panel no longer has.
+  string egress_id = 3;
+  string egress_name = 4;
+  // member names the member within its egress, empty for an egress of one
+  // member: a server of a subscription by its key (12 hex digits made of its
+  // address, which hold no secret), or "warp", or "psiphon".
+  string member = 5;
+  // status is "up", "down" or "unknown" (not checked yet).
+  string status = 6;
+  // latency_ms is the time that the last check took to get an answer of a
+  // datacenter of Telegram through the member.
+  uint32 latency_ms = 7;
+  // exit_ip is the address that the member goes out from, as the echo
+  // services said; empty when it is not known.
+  string exit_ip = 8;
+  // checked_unix is when the member was last checked, in Unix seconds; 0 when
+  // the node does not say (a node older than the report). A time more than a
+  // minute ahead of the clock of the panel is taken as a minute ahead.
+  int64 checked_unix = 9;
+  // egress_kind is the kind of the egress, as Egress.kind has it: direct for
+  // the egress of the implicit chain, empty for an egress that the panel no
+  // longer has.
+  string egress_kind = 10;
+  // stale says that what the member reports says nothing of now: the report
+  // is stale, or the member was last checked longer ago than the report may
+  // be old (see GetNodeEgressHealthResponse.stale).
+  bool stale = 11;
+}
+
+message SetNodeDnsModeRequest {
+  string node_id = 1;
+  // dns_mode is "doh", "system", or empty for the default of the node (doh).
+  string dns_mode = 2;
+}
+
+message SetNodeDnsModeResponse {
+  Node node = 1;
+  // before_run_id is the diagnostic run that the panel made of the node before
+  // the change (R6-3); its after-run, related to it, follows once the node
+  // has applied the change. "" when the edit ran no checks: it changed nothing
+  // that they are run for, or the panel could not store a run.
+  string before_run_id = 2;
+}
+
+// ChainService keeps the egress chains: the egresses that the connections of
+// proxies go out through, in the order that the edge tries them. The edge
+// checks every member of a chain (it asks a datacenter of Telegram through it)
+// and fails over to the next member that is up.
+//
+// A chain belongs to a node, which alone can use it, or to none, and then every
+// node can. Its members are egresses that its node can use: a chain of every
+// node has only egresses of every node. A node goes out through its default
+// chain (SetNodeDefaultChain), directly when it has none, and a proxy through
+// its own chain, or the default of its node; a proxy can also send what it
+// does for a scope through a chain of its own: "me" for its connections to the
+// middle proxies of Telegram, "fetch" for what it downloads (the proxy
+// service).
+//
+// Changes are made, and refused, as those of EgressService. Errors are Connect
+// errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a chain without
+//     members, a member twice, or an egress that the node of the chain cannot
+//     use;
+//   - NOT_FOUND: there is no such chain, node or egress;
+//   - FAILED_PRECONDITION: DeleteChain of a chain that a node or a proxy uses,
+//     or a change that a node would refuse or cannot take.
+service ChainService {
+  // ListChains returns the chains, or those that one node can use, in the
+  // order they were made.
+  rpc ListChains(ListChainsRequest) returns (ListChainsResponse);
+
+  // GetChain returns one chain.
+  rpc GetChain(GetChainRequest) returns (GetChainResponse);
+
+  // CreateChain makes a chain. Nothing uses it yet.
+  rpc CreateChain(CreateChainRequest) returns (CreateChainResponse);
+
+  // UpdateChain changes the fields that the request sets. Its node stays.
+  rpc UpdateChain(UpdateChainRequest) returns (UpdateChainResponse);
+
+  // DeleteChain deletes a chain that no node and no proxy uses.
+  rpc DeleteChain(DeleteChainRequest) returns (DeleteChainResponse);
+
+  // SetNodeDefaultChain sets the chain that a node goes out through, and the
+  // proxies of the node that have no chain of their own.
+  rpc SetNodeDefaultChain(SetNodeDefaultChainRequest) returns (SetNodeDefaultChainResponse);
+}
+
+// ChainCheck is how the edge checks the members of a chain. A value that is 0,
+// and dc_addrs that are empty, are the defaults of the node: a check every 30
+// seconds, 4 seconds for one, a member down after 3 failures in a row and up
+// again after 2 successes in a row, against the datacenters DC1 to DC5 of
+// Telegram. A node runs one check for all of its chains: that of its default
+// chain, or else of the first chain that has one.
+message ChainCheck {
+  // interval_seconds is 0, or 1 to 3600.
+  uint32 interval_seconds = 1;
+  // timeout_seconds is 0, or 1 to 60.
+  uint32 timeout_seconds = 2;
+  // fail_threshold and recover_threshold are 0, or 1 to 100.
+  uint32 fail_threshold = 3;
+  uint32 recover_threshold = 4;
+  // dc_addrs are at most 16 addresses of datacenters, host:port.
+  repeated string dc_addrs = 5;
+}
+
+// Chain is an ordered list of egresses.
+message Chain {
+  string id = 1;
+  string name = 2;
+  // node_id is the node that the chain belongs to, which alone can use it;
+  // empty for a chain that every node can use.
+  string node_id = 3;
+  // member_ids are the egresses of the chain, in the order that the edge tries
+  // them.
+  repeated string member_ids = 4;
+  ChainCheck check = 5;
+  // default_of are the nodes whose default chain it is.
+  repeated string default_of = 6;
+  // proxy_ids are the proxies that use it, as their chain or for a scope.
+  repeated string proxy_ids = 7;
+  int64 created_unix = 8;
+  int64 updated_unix = 9;
+}
+
+message ListChainsRequest {
+  // node_id selects the chains that the node can use: those of every node, and
+  // its own. Empty for every chain.
+  string node_id = 1;
+}
+
+message ListChainsResponse {
+  repeated Chain chains = 1;
+}
+
+message GetChainRequest {
+  string id = 1;
+}
+
+message GetChainResponse {
+  Chain chain = 1;
+}
+
+message CreateChainRequest {
+  // name has 1 to 64 characters.
+  string name = 1;
+  // node_id makes the chain one of that node; empty for one that every node
+  // can use.
+  string node_id = 2;
+  // member_ids are 1 to 64 egresses that the node of the chain can use, each
+  // once, in the order that the edge tries them.
+  repeated string member_ids = 3;
+  // check is the default of the node when it is not set.
+  ChainCheck check = 4;
+}
+
+message CreateChainResponse {
+  Chain chain = 1;
+}
+
+// ChainMembers are the members of a chain, in their order.
+message ChainMembers {
+  repeated string ids = 1;
+}
+
+message UpdateChainRequest {
+  string id = 1;
+  optional string name = 2;
+  // members, when set, are the new members, with the rules of
+  // CreateChainRequest.
+  ChainMembers members = 3;
+  // check, when set, is the new check.
+  ChainCheck check = 4;
+}
+
+message UpdateChainResponse {
+  Chain chain = 1;
+}
+
+message DeleteChainRequest {
+  string id = 1;
+}
+
+message DeleteChainResponse {}
+
+message SetNodeDefaultChainRequest {
+  string node_id = 1;
+  // chain_id is a chain that the node can use; empty for none: the node goes
+  // out directly.
+  string chain_id = 2;
+}
+
+message SetNodeDefaultChainResponse {
+  Node node = 1;
+  // before_run_id is the diagnostic run that the panel made of the node before
+  // the change (R6-3); its after-run, related to it, follows once the node
+  // has applied the change. "" when the edit ran no checks: it changed nothing
+  // that they are run for, or the panel could not store a run.
+  string before_run_id = 2;
+}

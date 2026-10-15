@@ -1,0 +1,85 @@
+{
+  "generation": "7",
+  "settings": {
+    "default_chain_id": "default",
+    "domain_pool": [
+      "a.example",
+      "b.example",
+      "c.example"
+    ],
+    "ip_policy": "IP_POLICY_COUNTRIES",
+    "ip_retention_hours": 168
+  },
+  "listeners": [
+    {
+      "id": "01K6Y0000000000000000000A1",
+      "kind": "LISTENER_KIND_TLS",
+      "bind_ip": "0.0.0.0",
+      "port": 443,
+      "stranger_action": "STRANGER_ACTION_MASK",
+      "non_tls_action": "NON_TLS_ACTION_DROP"
+    },
+    {
+      "id": "01K6Y0000000000000000000A2",
+      "kind": "LISTENER_KIND_TLS",
+      "bind_ip": "198.51.100.7",
+      "port": 8443,
+      "stranger_action": "STRANGER_ACTION_REJECT",
+      "mask_target": "mask.example.com:443",
+      "non_tls_action": "NON_TLS_ACTION_HTTP400"
+    }
+  ],
+  "proxies": [
+    {
+      "id": "01K6Y0000000000000000000B1",
+      "listener_id": "01K6Y0000000000000000000A1",
+      "type": "PROXY_TYPE_FAKETLS",
+      "enabled": true,
+      "secret": "<secret of 01K6Y0000000000000000000B1>",
+      "domain": "cdn.example.com",
+      "engine": "ENGINE_TELEMT",
+      "engine_version": "3.5.13",
+      "limits": {
+        "devices": 3,
+        "conns_total": 100,
+        "conns_per_ip": 10
+      }
+    },
+    {
+      "id": "01K6Y0000000000000000000B2",
+      "listener_id": "01K6Y0000000000000000000A2",
+      "type": "PROXY_TYPE_FAKETLS",
+      "secret": "<secret of 01K6Y0000000000000000000B2>",
+      "domain": "WWW.Example.COM",
+      "engine": "ENGINE_TELEMT",
+      "engine_version": "3.5.13",
+      "limits": {},
+      "ad_tag": "aabbccddeeff00112233445566778899",
+      "use_middle_proxy": true
+    }
+  ],
+  "egresses": [
+    {
+      "id": "direct",
+      "kind": "EGRESS_KIND_DIRECT"
+    }
+  ],
+  "chains": [
+    {
+      "id": "default",
+      "member_egress_ids": [
+        "direct"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "engine": "telemt",
+      "version": "3.5.13",
+      "arch": "arm64",
+      "sha256": "f7b5181f1160e9ec73eb28705040bf159782055ec71f54a20214e2c9a6d997cd",
+      "file_name": "telemt-aarch64-linux-musl.tar.gz",
+      "binary": "telemt"
+    }
+  ]
+}

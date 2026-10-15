@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// DnsCredentialService keeps the DNS credentials that the nodes issue the
+// certificates of WEB proxies with (ACME DNS-01): for Cloudflare, an API token
+// with Zone:DNS:Edit on the zone of the domain. A token is write-only: it is
+// stored sealed, handed to the nodes of the proxies that use it, and never
+// returned.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a name that is empty or too long, a provider that
+//     the panel does not know, or an empty token.
+//   - NOT_FOUND: there is no such credential.
+//   - FAILED_PRECONDITION: DeleteDnsCredential of a credential that proxies
+//     still use.
+service DnsCredentialService {
+  // ListDnsCredentials returns every credential, in the order they were
+  // created.
+  rpc ListDnsCredentials(ListDnsCredentialsRequest) returns (ListDnsCredentialsResponse);
+
+  // CreateDnsCredential stores a credential.
+  rpc CreateDnsCredential(CreateDnsCredentialRequest) returns (CreateDnsCredentialResponse);
+
+  // UpdateDnsCredential changes the fields that the request sets. A new token
+  // goes to the nodes of the proxies that use the credential.
+  rpc UpdateDnsCredential(UpdateDnsCredentialRequest) returns (UpdateDnsCredentialResponse);
+
+  // DeleteDnsCredential deletes a credential that no proxy uses.
+  rpc DeleteDnsCredential(DeleteDnsCredentialRequest) returns (DeleteDnsCredentialResponse);
+}
+
+// DnsCredential is a DNS credential without its token.
+message DnsCredential {
+  string id = 1;
+  // name is how the admin calls it.
+  string name = 2;
+  // provider is "cloudflare".
+  string provider = 3;
+  // used_by is how many proxies use the credential.
+  uint32 used_by = 4;
+  int64 created_unix = 5;
+  int64 updated_unix = 6;
+}
+
+message ListDnsCredentialsRequest {}
+
+message ListDnsCredentialsResponse {
+  repeated DnsCredential credentials = 1;
+}
+
+message CreateDnsCredentialRequest {
+  // name has 1 to 64 characters.
+  string name = 1;
+  // provider is "cloudflare", which is also what empty means.
+  string provider = 2;
+  // token is the API token: 1 to 1024 characters, no spaces around it.
+  string token = 3;
+}
+
+message CreateDnsCredentialResponse {
+  DnsCredential credential = 1;
+}
+
+message UpdateDnsCredentialRequest {
+  string id = 1;
+  optional string name = 2;
+  // token, when set, is the new token (not empty).
+  optional string token = 3;
+}
+
+message UpdateDnsCredentialResponse {
+  DnsCredential credential = 1;
+}
+
+message DeleteDnsCredentialRequest {
+  string id = 1;
+}
+
+message DeleteDnsCredentialResponse {}

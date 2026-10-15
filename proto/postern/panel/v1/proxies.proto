@@ -1,0 +1,612 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+import "postern/panel/v1/nodes.proto";
+
+// ListenerService keeps the listeners of the nodes: the ports that a node
+// accepts the clients of its proxies on. A listener of kind tls reads the TLS
+// ClientHello of a connection and routes it by its server name, so any number
+// of proxies share one listener, each with a domain of its own.
+//
+// Every change raises the desired generation of the node, and the panel sends
+// the node its new state.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a port out of
+//     range, an IPv6 bind address, or the management port of the node, where
+//     its agent listens.
+//   - NOT_FOUND: there is no such node or listener.
+//   - ALREADY_EXISTS: another listener of the node has the address, or would
+//     share the port in a way that cannot work: on one port a node listens
+//     either on 0.0.0.0 alone or on specific addresses only.
+//   - FAILED_PRECONDITION: DeleteListener of a listener that proxies still
+//     use, or a change after which the node would refuse its state for a
+//     reason that the message gives.
+service ListenerService {
+  // ListListeners returns the listeners of a node, or of every node, in the
+  // order they were created.
+  rpc ListListeners(ListListenersRequest) returns (ListListenersResponse);
+
+  // CreateListener adds a listener to a node.
+  rpc CreateListener(CreateListenerRequest) returns (CreateListenerResponse);
+
+  // UpdateListener changes the fields that the request sets and leaves the
+  // others as they are. A new address or port changes the links of the
+  // proxies of the listener.
+  rpc UpdateListener(UpdateListenerRequest) returns (UpdateListenerResponse);
+
+  // DeleteListener deletes a listener that no proxy uses.
+  rpc DeleteListener(DeleteListenerRequest) returns (DeleteListenerResponse);
+}
+
+// Listener is a port that a node accepts the clients of its proxies on.
+message Listener {
+  string id = 1;
+  string node_id = 2;
+  // kind is "tls", a public port that routes connections by the server name
+  // of their TLS ClientHello, or "http-upstream", a port on a loopback or
+  // private address that takes plain HTTP from a web server of the node for
+  // the WEB proxies under a base path of its site.
+  string kind = 3;
+  // bind_ip is an IPv4 address of the node, or 0.0.0.0 for all of them.
+  string bind_ip = 4;
+  uint32 port = 5;
+  // link_host_override is the host that the links of the proxies of this
+  // listener use instead of the link_host of the node; empty for none.
+  string link_host_override = 6;
+  // stranger_action is what a connection gets whose server name no proxy of
+  // the listener has: "mask" relays it to mask_target, or, without one, to
+  // the server name itself on port 443 when that is a domain of the pool or of
+  // a proxy, and refuses it like "reject" otherwise; "reject" answers with
+  // the TLS alert unrecognized_name; "drop" closes the connection after a
+  // random delay.
+  string stranger_action = 7;
+  // mask_target is where "mask" relays strangers to: "host" or "host:port",
+  // port 443 when it has none; empty for the server name of the stranger.
+  string mask_target = 8;
+  // non_tls_action is what a connection gets that is not TLS: "drop", or
+  // "http400", the answer of nginx to plain HTTP on an HTTPS port.
+  string non_tls_action = 9;
+  int64 created_unix = 10;
+  int64 updated_unix = 11;
+  // trusted_cidrs are, on an http-upstream listener, the addresses of the
+  // web servers in front of it, whose X-Forwarded-For is believed: prefixes
+  // or single addresses inside the loopback or private ranges. A client
+  // inside them chooses its own identity (the address it puts in
+  // X-Forwarded-For), so they name the web servers only. Empty on a tls
+  // listener.
+  repeated string trusted_cidrs = 12;
+}
+
+message ListListenersRequest {
+  // node_id selects the listeners of one node; empty for those of every node.
+  string node_id = 1;
+}
+
+message ListListenersResponse {
+  repeated Listener listeners = 1;
+}
+
+message CreateListenerRequest {
+  string node_id = 1;
+  // kind is "tls", which is also what empty means, or "http-upstream". The
+  // kind of a listener does not change afterwards.
+  string kind = 2;
+  // bind_ip is an IPv4 address of the node; empty means 0.0.0.0. An
+  // http-upstream listener binds a loopback or private address, 127.0.0.1
+  // when empty.
+  string bind_ip = 3;
+  // port is 1 to 65535. On a loopback address (or 0.0.0.0) the ports
+  // 20000-40999 are the node's own and refused.
+  uint32 port = 4;
+  // link_host_override is an IP address (IPv6 without brackets), a host
+  // name, or empty.
+  string link_host_override = 5;
+  // stranger_action is "mask" (also what empty means), "reject" or "drop".
+  string stranger_action = 6;
+  // mask_target is a host or host:port, or empty.
+  string mask_target = 7;
+  // non_tls_action is "drop" (also what empty means) or "http400".
+  string non_tls_action = 8;
+  // trusted_cidrs are required on an http-upstream listener (Listener), and
+  // must be empty on a tls one.
+  repeated string trusted_cidrs = 9;
+}
+
+message CreateListenerResponse {
+  Listener listener = 1;
+  // port_taken_by are the processes other than Postern that listen where the
+  // listener is to listen, as the node said the last time that the panel
+  // asked it (Node.port_owners). The listener is stored all the same: a proxy
+  // that moves to Postern from a server that still serves it needs that. But
+  // the edge cannot listen there while they hold the port, and the node fails
+  // to apply its state until then (Node.last_error says so): the UI warns.
+  // Empty when the port is free, or the node has not said.
+  repeated PortOwner port_taken_by = 2;
+}
+
+message UpdateListenerRequest {
+  string id = 1;
+  // The fields that are set are changed, with the rules of
+  // CreateListenerRequest; an empty value means what it means there.
+  optional string bind_ip = 2;
+  optional uint32 port = 3;
+  optional string link_host_override = 4;
+  optional string stranger_action = 5;
+  optional string mask_target = 6;
+  optional string non_tls_action = 7;
+  // trusted_cidrs, when set, replace the trusted CIDRs as a whole.
+  TrustedCidrs trusted_cidrs = 8;
+}
+
+// TrustedCidrs are the trusted CIDRs of an http-upstream listener, as
+// Listener.trusted_cidrs has them.
+message TrustedCidrs {
+  repeated string cidrs = 1;
+}
+
+message UpdateListenerResponse {
+  Listener listener = 1;
+  // port_taken_by is as in CreateListenerResponse, for the address that the
+  // listener has after the change.
+  repeated PortOwner port_taken_by = 2;
+}
+
+message DeleteListenerRequest {
+  string id = 1;
+}
+
+message DeleteListenerResponse {}
+
+// ProxyService keeps the proxies: one proxy is one link. A proxy lives on a
+// listener of its node and is told apart from the other proxies there by its
+// domain, the server name that its clients send. It goes out through an
+// egress chain (ChainService): its own, or the default chain of its node.
+//
+// Every change raises the desired generation of the node, and the panel sends
+// the node its new state. The secret of a proxy is only ever returned inside
+// its links (GetProxyLinks).
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a secret that
+//     is not 32 hex digits, an engine version that the panel does not know, a
+//     scope other than me and fetch, or a chain of another node.
+//   - NOT_FOUND: there is no such node, listener, proxy or egress chain, or
+//     the listener belongs to another node.
+//   - ALREADY_EXISTS: another proxy of the listener has the domain (letter
+//     case aside).
+//   - FAILED_PRECONDITION: every domain of the pool is in use on the listener
+//     and the request names none; the node has no host for links; or the node
+//     would refuse its state after the change, or cannot take it yet ("upgrade
+//     node <name> to use <feature>"), for a reason that the message gives.
+service ProxyService {
+  // ListProxies returns the proxies of a node, or of every node, in the order
+  // they were created, with the status that their nodes reported last.
+  rpc ListProxies(ListProxiesRequest) returns (ListProxiesResponse);
+
+  // GetProxy returns one proxy.
+  rpc GetProxy(GetProxyRequest) returns (GetProxyResponse);
+
+  // CreateProxy adds a proxy to a listener: a fake-TLS one, or a WEB one
+  // (type "web") with its WEB settings. It is enabled at once. A WEB proxy
+  // is checked before it is stored (preflight): its domain is unique among
+  // the WEB proxies of the panel, an A record of the domain is an address of
+  // the node, and the domain is not proxied by Cloudflare; FAILED_PRECONDITION
+  // names what is wrong.
+  rpc CreateProxy(CreateProxyRequest) returns (CreateProxyResponse);
+
+  // UpdateProxy changes the fields that the request sets and leaves the others
+  // as they are. A new listener, domain or secret changes the links.
+  rpc UpdateProxy(UpdateProxyRequest) returns (UpdateProxyResponse);
+
+  // DeleteProxy deletes a proxy and its statistics.
+  rpc DeleteProxy(DeleteProxyRequest) returns (DeleteProxyResponse);
+
+  // SetProxyEnabled pauses a proxy or resumes it. A paused proxy is not
+  // served: its node treats its domain as a stranger's.
+  rpc SetProxyEnabled(SetProxyEnabledRequest) returns (SetProxyEnabledResponse);
+
+  // GetProxyLinks returns the links of a proxy, which carry its secret, and a
+  // QR code of the tg:// link. For a WEB proxy they are the tg://webproxy and
+  // https://t.me/webproxy links.
+  rpc GetProxyLinks(GetProxyLinksRequest) returns (GetProxyLinksResponse);
+
+  // GetWebSnippets returns, for a WEB proxy on an http-upstream listener, the
+  // configuration of the web server in front of it (Caddy and nginx) that
+  // hands the base path of the proxy to the node. FAILED_PRECONDITION for a
+  // proxy that is not one.
+  rpc GetWebSnippets(GetWebSnippetsRequest) returns (GetWebSnippetsResponse);
+}
+
+// ProxyLimits limit a proxy. 0 is no limit.
+message ProxyLimits {
+  // devices is how many unique client IPs may use the proxy at a time.
+  uint32 devices = 1;
+  // conns_total is how many connections the proxy may have open at a time.
+  uint32 conns_total = 2;
+  // conns_per_ip is how many connections one IP may have open at a time.
+  uint32 conns_per_ip = 3;
+}
+
+// ProxyStatus is what the node of a proxy last reported about it.
+message ProxyStatus {
+  // phase is "unknown" (nothing reported since the panel started), "pending",
+  // "starting", "ready", "serving", "draining", "failed" or "paused".
+  string phase = 1;
+  // reason says why, for example why the proxy failed.
+  string reason = 2;
+  // running_version is the version of the engine that serves the proxy.
+  string running_version = 3;
+  // instance_generation is the generation of that engine instance.
+  uint64 instance_generation = 4;
+  // reported_unix is when the node reported this, in Unix seconds; 0 for
+  // never.
+  int64 reported_unix = 5;
+  // running_engine is the engine that serves the proxy, as the node reports
+  // it ("telemt" or "mtg"): after a failed switch it is the engine that kept
+  // serving, not the one the proxy is to run. Empty until the node says.
+  string running_engine = 6;
+  // failed_version is the version of the engine that the node tried and
+  // could not bring up for the proxy, while the running one kept serving;
+  // empty when the last change went through.
+  string failed_version = 7;
+}
+
+// Proxy is one MTProto proxy: one link.
+message Proxy {
+  string id = 1;
+  string node_id = 2;
+  string listener_id = 3;
+  // type is "faketls" or "web".
+  string type = 4;
+  string name = 5;
+  string note = 6;
+  bool enabled = 7;
+  // domain is the fake-TLS domain, or the domain of a WEB proxy, as it is in
+  // the links.
+  string domain = 8;
+  ProxyLimits limits = 9;
+  // ad_tag is the promotion tag, or empty.
+  string ad_tag = 10;
+  // engine is "telemt" or "mtg".
+  string engine = 11;
+  // engine_version is the version of the engine that the proxy is to run:
+  // the one it is pinned to, the one a rollout holds it at, or else the
+  // version of its engine on the channel of its node (version_source says
+  // which).
+  string engine_version = 12;
+  bool engine_version_pinned = 13;
+  ProxyStatus status = 14;
+  int64 created_unix = 15;
+  int64 updated_unix = 16;
+  // egress_chain_id is the egress chain that the connections of the proxy go
+  // out through (ChainService); empty for the default chain of its node.
+  string egress_chain_id = 17;
+  // egress_scope_chains are the chains that the proxy sends what it does for a
+  // scope through, by scope: "me", its connections to the middle proxies of
+  // Telegram, and "fetch", what it downloads. A scope that is not there takes
+  // the chain of the proxy.
+  map<string, string> egress_scope_chains = 18;
+  // use_middle_proxy is whether the engine goes through the middle proxies of
+  // Telegram: "on", "off", or "auto", which is on when the proxy has an ad_tag
+  // and off when it has none.
+  string use_middle_proxy = 19;
+  // web are the settings of a WEB proxy; unset for a fake-TLS one.
+  WebSettings web = 20;
+  // version_source says which rule gives engine_version: "pinned" (the proxy
+  // is pinned to it), "rollout" (a rollout holds it there) or "channel" (it
+  // follows the channel of its node).
+  string version_source = 21;
+  // channel is the channel that the proxy follows through its node: the
+  // node's own, or the default of the panel when the node has none.
+  string channel = 22;
+  // outdated is what the outdated filter of ListProxies judges: the node
+  // reports the proxy served by another engine or version than engine_version,
+  // or engine_version is older than the newest release of the engine on the
+  // channel. Only ListProxies sets it.
+  bool outdated = 23;
+}
+
+// WebSettings are the settings of a WEB proxy as the panel shows them: no
+// certificate and no credential, only what is known of them.
+message WebSettings {
+  // base_path puts the proxy under a path of its domain ("tg" or "a/b");
+  // empty is the root of the domain.
+  string base_path = 1;
+  // secret_mode is "plain" or "dd".
+  string secret_mode = 2;
+  // carrier is "https" or "https-lanes".
+  string carrier = 3;
+  // cert_mode is "acme-dns01" or "imported" on a tls listener; empty on an
+  // http-upstream listener, where the web server in front owns the
+  // certificate.
+  string cert_mode = 4;
+  // dns_credential_id is the DNS credential of cert_mode acme-dns01.
+  string dns_credential_id = 5;
+  // acme_email is the contact of the ACME account; may be empty.
+  string acme_email = 6;
+  // cert_sha256 is, for cert_mode imported, the lowercase hex SHA-256 of the
+  // imported chain, and cert_not_after_unix when its certificate expires.
+  string cert_sha256 = 7;
+  int64 cert_not_after_unix = 8;
+}
+
+// WebSettingsInput are the WEB settings of a request.
+message WebSettingsInput {
+  // base_path: segments of [A-Za-z0-9][A-Za-z0-9_-]* of at most 128 bytes
+  // each, joined by slashes, none at either end. Required on an http-upstream
+  // listener; empty on a tls listener puts the proxy at the root of the
+  // domain.
+  string base_path = 1;
+  // secret_mode is "plain" (also what empty means) or "dd".
+  string secret_mode = 2;
+  // carrier is "https" (also what empty means) or "https-lanes".
+  string carrier = 3;
+  // cert_mode is "acme-dns01" (also what empty means) or "imported" on a tls
+  // listener; ignored on an http-upstream listener.
+  string cert_mode = 4;
+  // dns_credential_id is a DNS credential (DnsCredentialService); required
+  // for cert_mode acme-dns01.
+  string dns_credential_id = 5;
+  // acme_email is the contact of the ACME account, or empty.
+  string acme_email = 6;
+  // cert_fullchain_pem and cert_key_pem are the certificate chain (leaf
+  // first) and its private key, PEM, for cert_mode imported: a pair for the
+  // domain, valid now. In UpdateProxy, both empty keep the stored ones.
+  bytes cert_fullchain_pem = 7;
+  bytes cert_key_pem = 8;
+}
+
+// ScopeChains are the egress chains of a proxy by scope, as
+// Proxy.egress_scope_chains has them.
+message ScopeChains {
+  map<string, string> chains = 1;
+}
+
+message ListProxiesRequest {
+  // node_id selects the proxies of one node; empty for those of every node.
+  string node_id = 1;
+  // query, when it is not empty, selects the proxies whose id, name, note or
+  // domain contains it, letter case aside.
+  string query = 2;
+  // engine, when it is not empty, selects the proxies of that engine
+  // ("telemt" or "mtg").
+  string engine = 3;
+  // outdated selects the proxies whose node reports another engine or version
+  // than the one they are to run, or whose version is older than the newest
+  // release of their engine on their channel.
+  bool outdated = 4;
+}
+
+message ListProxiesResponse {
+  repeated Proxy proxies = 1;
+}
+
+message GetProxyRequest {
+  string id = 1;
+}
+
+message GetProxyResponse {
+  Proxy proxy = 1;
+}
+
+message CreateProxyRequest {
+  string node_id = 1;
+  // listener_id is a listener of the node.
+  string listener_id = 2;
+  // name has at most 64 characters; it may be empty.
+  string name = 3;
+  // note has at most 1024 characters.
+  string note = 4;
+  // domain is the fake-TLS domain: a host name that no other proxy of the
+  // listener has, letter case aside. It is kept as it is given. Empty picks a
+  // domain of the pool that the listener does not use yet. A WEB proxy needs
+  // its domain, of at least two labels, which is also its address.
+  string domain = 5;
+  // secret is 32 hex digits, kept as it is given; empty makes a random one.
+  string secret = 6;
+  // limits are none when unset.
+  ProxyLimits limits = 7;
+  // ad_tag is a promotion tag of 32 hex digits, or empty. With one, the
+  // engine goes through the middle proxies of Telegram, unless use_middle_proxy
+  // says "off".
+  string ad_tag = 8;
+  // engine_version pins the proxy to a version of the engine that the panel
+  // knows; empty follows the version that the panel recommends.
+  string engine_version = 9;
+  // egress_chain_id is a chain that the node can use; empty for the default
+  // chain of the node.
+  string egress_chain_id = 10;
+  // egress_scope_chains are chains that the node can use, by scope ("me" or
+  // "fetch"); a scope with an empty chain is left out.
+  map<string, string> egress_scope_chains = 11;
+  // use_middle_proxy is "auto", "on" or "off": whether the engine goes through
+  // the middle proxies of Telegram. "auto", which is also what empty means, is
+  // on when the proxy has an ad_tag and off when it has none.
+  string use_middle_proxy = 12;
+  // type is "faketls" (also what empty means) or "web".
+  string type = 13;
+  // web are the settings of a WEB proxy; required for type web, refused
+  // otherwise.
+  WebSettingsInput web = 14;
+  // engine is "telemt" (the default) or "mtg". An mtg proxy is fake TLS only,
+  // with no ad_tag, no engine overrides and the middle proxies off, and needs
+  // a node with the capability "engine-mtg". mtg's domain fronting dials
+  // directly from the node, not through the egress chain, to the proxy's
+  // domain or to its mask target override, which the node resolves to an
+  // address that has to be public; the listener's mask target is not used.
+  // The engine is never changed by UpdateProxy: a switch is a rollout
+  // (VersionService).
+  string engine = 15;
+}
+
+message CreateProxyResponse {
+  Proxy proxy = 1;
+  // warnings are what the panel saw but did not refuse the change for, in
+  // its words: a node that has not reported its public addresses (the domain
+  // of a WEB proxy was not compared with them), an imported certificate that
+  // expires soon.
+  repeated string warnings = 2;
+}
+
+message UpdateProxyRequest {
+  string id = 1;
+  // The fields that are set are changed, with the rules of
+  // CreateProxyRequest: an empty domain picks a new one from the pool, an
+  // empty secret makes a new random one, an empty engine_version follows
+  // the recommended version again, and an empty use_middle_proxy is "auto".
+  optional string listener_id = 2;
+  optional string name = 3;
+  optional string note = 4;
+  optional string domain = 5;
+  optional string secret = 6;
+  // limits replace the limits when set.
+  ProxyLimits limits = 7;
+  optional string ad_tag = 8;
+  optional string engine_version = 9;
+  // egress_chain_id, when set, is the new chain; empty for the default chain
+  // of the node.
+  optional string egress_chain_id = 10;
+  // egress_scope_chains, when set, replace the chains by scope.
+  ScopeChains egress_scope_chains = 11;
+  optional string use_middle_proxy = 12;
+  // web, when set, replaces the WEB settings of a WEB proxy as a whole;
+  // refused for a fake-TLS proxy. The type of a proxy does not change.
+  WebSettingsInput web = 13;
+}
+
+message UpdateProxyResponse {
+  Proxy proxy = 1;
+  // warnings are what the panel saw but did not refuse the change for, in
+  // its words: a node that has not reported its public addresses (the domain
+  // of a WEB proxy was not compared with them), an imported certificate that
+  // expires soon.
+  repeated string warnings = 2;
+  // before_run_id is the diagnostic run that the panel made of the proxy's scope before
+  // the change (R6-3); its after-run, related to it, follows once the node
+  // has applied the change. "" when the edit ran no checks: it changed nothing
+  // that they are run for, or the panel could not store a run.
+  string before_run_id = 3;
+}
+
+message DeleteProxyRequest {
+  string id = 1;
+}
+
+message DeleteProxyResponse {}
+
+message SetProxyEnabledRequest {
+  string id = 1;
+  bool enabled = 2;
+}
+
+message SetProxyEnabledResponse {
+  Proxy proxy = 1;
+}
+
+message GetProxyLinksRequest {
+  string id = 1;
+}
+
+message GetProxyLinksResponse {
+  // tg is the tg://proxy link (tg://webproxy for a WEB proxy).
+  string tg = 1;
+  // https is the https://t.me/proxy link (https://t.me/webproxy for a WEB
+  // proxy).
+  string https = 2;
+  // qr_svg is an SVG image of the QR code of the tg link.
+  string qr_svg = 3;
+}
+
+message GetWebSnippetsRequest {
+  string id = 1;
+}
+
+message GetWebSnippetsResponse {
+  // caddy is a Caddyfile fragment for the site of the domain, nginx one for
+  // its server block. Both hand the whole subtree of the base path, and the
+  // path without the slash, to the listener, pass Host and set
+  // X-Forwarded-For to the client address.
+  string caddy = 1;
+  string nginx = 2;
+}
+
+// StatsService reports what the nodes measure about their proxies.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: an unknown range.
+//   - NOT_FOUND: there is no such proxy.
+service StatsService {
+  // ProxyLive returns the latest minute that the node of a proxy reported
+  // about it, and the status of the proxy.
+  rpc ProxyLive(ProxyLiveRequest) returns (ProxyLiveResponse);
+
+  // ProxySeries returns the traffic of a proxy over a range of time that ends
+  // now: minutes while the range fits the minutes that the statistics
+  // settings keep, hours while it fits the hours, days beyond.
+  rpc ProxySeries(ProxySeriesRequest) returns (ProxySeriesResponse);
+}
+
+message ProxyLiveRequest {
+  string proxy_id = 1;
+}
+
+message ProxyLiveResponse {
+  // minute is unset while the node has reported no minute of the proxy since
+  // the panel started.
+  LiveMinute minute = 1;
+  ProxyStatus status = 2;
+}
+
+// LiveMinute is one minute of a proxy as its node reported it.
+message LiveMinute {
+  // minute_unix is the start of the minute, in Unix seconds.
+  int64 minute_unix = 1;
+  // up is the bytes from the clients to Telegram, down the other way.
+  uint64 up = 2;
+  uint64 down = 3;
+  // conns_new is the connections opened in the minute, conns_peak the most
+  // that were open at once.
+  uint32 conns_new = 4;
+  uint32 conns_peak = 5;
+  // devices is the unique client IPs.
+  uint32 devices = 6;
+  // conns_active is the connections that were open when the minute was
+  // reported.
+  uint32 conns_active = 7;
+}
+
+message ProxySeriesRequest {
+  string proxy_id = 1;
+  // range is "1h", "24h" (also what empty means), "7d", "30d", "90d" or "1y"
+  // (365 days).
+  string range = 2;
+}
+
+message ProxySeriesResponse {
+  // step_seconds is the length of a point: 60, 3600 or 86400.
+  uint32 step_seconds = 1;
+  // The points are the periods that start in [from_unix, to_unix), oldest
+  // first. A period without statistics has no point.
+  int64 from_unix = 2;
+  int64 to_unix = 3;
+  repeated SeriesPoint points = 4;
+}
+
+// SeriesPoint is the traffic of a proxy in one period.
+message SeriesPoint {
+  // ts_unix is the start of the period, in Unix seconds.
+  int64 ts_unix = 1;
+  uint64 up = 2;
+  uint64 down = 3;
+  uint32 conns_new = 4;
+  // conns_peak and devices are the highest of the minutes of the period.
+  uint32 conns_peak = 5;
+  uint32 devices = 6;
+}

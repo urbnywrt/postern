@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Postern</title>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        max-width: 38rem;
+        margin: 4rem auto;
+        padding: 0 1rem;
+      }
+      code {
+        background: rgba(127, 127, 127, 0.2);
+        border-radius: 0.25em;
+        padding: 0.1em 0.3em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Postern UI not built</h1>
+    <p>
+      This panel was built without its web interface. The API under <code>/api</code> works.
+    </p>
+    <p>
+      To get the interface, run <code>npm ci &amp;&amp; npm run build</code> in <code>web/</code>, copy
+      <code>web/dist/</code> into <code>internal/panel/webui/dist/</code> and build the panel again.
+      The Docker image does all of that.
+    </p>
+  </body>
+</html>

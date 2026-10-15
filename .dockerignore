@@ -1,0 +1,54 @@
+# What a docker build of the repository does not need to see. The context is the
+# whole repository (docker build -f deploy/panel/Dockerfile ., and the same with
+# deploy/node/Dockerfile), and web/node_modules
+# alone is hundreds of megabytes.
+
+.git
+.github
+.githooks
+.superpowers
+.idea
+.vscode
+
+# Built or installed on the host: the image builds its own.
+**/node_modules
+web/dist
+bin
+dist
+coverage.*
+*.test
+*.out
+# Of dist/, where scripts/release.sh writes a release, the binaries and their
+# signatures: the images of a release are built of them (--build-arg PREBUILT=dist).
+!dist/postern-node-linux-*
+!dist/postern-panel-linux-*
+
+# The UI is built into this directory by the Docker build. Of what is here, only
+# the placeholder page is part of the source.
+internal/panel/webui/dist/*
+!internal/panel/webui/dist/index.html
+
+# Never in an image: local data and secrets. The last two are what compose.yaml
+# makes next to itself.
+/data
+/keys
+/deploy/panel/data
+/deploy/panel/keys
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.key
+**/*.pem
+**/*.crt
+**/*.p12
+**/.env
+**/.env.*
+.postern-denylist
+
+# Not part of a build of the panel. The scripts of deploy/node are (the node kit,
+# and launcher.sh of the node image),
+# their tests are not.
+docs
+proto
+**/*_test.sh

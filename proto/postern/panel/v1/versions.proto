@@ -1,0 +1,482 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// VersionService is the catalog of versions and the updates: the releases of
+// the engines (telemt, mtg), of the egress providers (xray, psiphon-core) and of
+// Postern itself, the channels that the nodes follow, the rollouts that move a
+// channel or switch engines one step at a time, and the update of the panel.
+//
+// Components are named telemt, mtg, xray, psiphon-core and postern. Channels are
+// stable (the built-in pins and the signed stable list) and latest (stable and
+// every upstream release). Versions are the upstream tags as published
+// (3.5.13, v2.2.8, v26.3.27); two versions are the same when their strings
+// are. A channel version only moves when a rollout completes.
+//
+// A change of channel (SetDefaultChannel, SetNodeChannel) is never an error for
+// want of a confirmation: the response lists the proxies whose version the
+// change alters, and applied says whether the change was made, which it is
+// only with confirm (Ruling S5-11).
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable: an unknown component or
+//     channel, a version that is not one, a mode that is neither manual nor
+//     auto, a selection that is empty.
+//   - NOT_FOUND: there is no such release, node, proxy or rollout.
+//   - FAILED_PRECONDITION: the call cannot be done as things are: another
+//     rollout is active for the channel or on one of the nodes, a release has
+//     no usable asset for the architecture of a node, a node lacks a
+//     capability that the call needs, the panel cannot update itself.
+//   - UNAVAILABLE: the release source does not answer, or the panel is
+//     restarting for an update.
+service VersionService {
+  // ListComponents returns every component with the versions of its channels
+  // and the newest release it knows, the default channel of the panel, and
+  // whether prereleases are followed.
+  rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+
+  // ListReleases returns the releases of a component that the panel knows,
+  // newest first.
+  rpc ListReleases(ListReleasesRequest) returns (ListReleasesResponse);
+
+  // RefreshReleases fetches the release list of a component, or of every
+  // component, from its source now, instead of at the next scheduled check.
+  rpc RefreshReleases(RefreshReleasesRequest) returns (RefreshReleasesResponse);
+
+  // PrepareRelease downloads and verifies the assets of a release for the
+  // given architectures, so that a rollout to it does not wait for them.
+  rpc PrepareRelease(PrepareReleaseRequest) returns (PrepareReleaseResponse);
+
+  // RecheckRelease checks an asset again that was found unusable, or whose
+  // check never ran.
+  rpc RecheckRelease(RecheckReleaseRequest) returns (RecheckReleaseResponse);
+
+  // SetDefaultChannel sets the channel that nodes without a channel of their
+  // own follow. The response lists the proxies whose version the change
+  // alters. Without confirm nothing is changed and applied is false; with
+  // confirm the change is made and applied is true.
+  rpc SetDefaultChannel(SetDefaultChannelRequest) returns (SetDefaultChannelResponse);
+
+  // SetNodeChannel sets the channel of one node, or makes it follow the
+  // default again, with the same confirm as SetDefaultChannel.
+  rpc SetNodeChannel(SetNodeChannelRequest) returns (SetNodeChannelResponse);
+
+  // StartRollout starts a rollout: of a channel to a version, of selected
+  // proxies to an engine, or of the agent and the edge of nodes to the version
+  // of the panel. The response holds the rollout with its steps.
+  rpc StartRollout(StartRolloutRequest) returns (StartRolloutResponse);
+
+  // GetRollout returns one rollout with its steps.
+  rpc GetRollout(GetRolloutRequest) returns (GetRolloutResponse);
+
+  // ListRollouts returns rollouts, newest first.
+  rpc ListRollouts(ListRolloutsRequest) returns (ListRolloutsResponse);
+
+  // ContinueRollout runs the next step of a rollout that is paused.
+  rpc ContinueRollout(ContinueRolloutRequest) returns (ContinueRolloutResponse);
+
+  // PauseRollout stops a running rollout after its current step.
+  rpc PauseRollout(PauseRolloutRequest) returns (PauseRolloutResponse);
+
+  // RetryRollout runs the step that failed again.
+  rpc RetryRollout(RetryRolloutRequest) returns (RetryRolloutResponse);
+
+  // AbortRollout ends a rollout and puts every step that was applied back.
+  rpc AbortRollout(AbortRolloutRequest) returns (AbortRolloutResponse);
+
+  // GetPanelVersion says which version the panel runs, which releases of
+  // Postern it knows, and whether it can update itself.
+  rpc GetPanelVersion(GetPanelVersionRequest) returns (GetPanelVersionResponse);
+
+  // UpdatePanel installs a release of Postern and restarts the panel with it.
+  rpc UpdatePanel(UpdatePanelRequest) returns (UpdatePanelResponse);
+
+  // GetReleaseSource says where the releases of Postern come from.
+  rpc GetReleaseSource(GetReleaseSourceRequest) returns (GetReleaseSourceResponse);
+
+  // SetReleaseSource changes where the releases of Postern come from, and the
+  // tokens that the panel uses. The tokens are write-only: the response says
+  // only whether there is one.
+  rpc SetReleaseSource(SetReleaseSourceRequest) returns (SetReleaseSourceResponse);
+}
+
+// Component is a program that the panel keeps versions of.
+message Component {
+  // name is telemt, mtg, xray, psiphon-core or postern.
+  string name = 1;
+  // kind is engine, provider or panel.
+  string kind = 2;
+  // channel_versions is the version of each channel, by channel.
+  map<string, string> channel_versions = 3;
+  // newest is the newest release that the panel knows, by channel: what each
+  // channel could move to.
+  map<string, string> newest = 4;
+  // checked_unix is when the release list was last fetched, in Unix seconds,
+  // 0 for never.
+  int64 checked_unix = 5;
+  // feed_error is why the last fetch failed; empty when it did not.
+  string feed_error = 6;
+  // followed_channels are, for an engine, the channels that a proxy follows
+  // (it runs the engine with the policy channel on a node on the channel),
+  // sorted; empty for the other kinds. A version rollout of an engine channel
+  // that is not among them only moves the channel.
+  repeated string followed_channels = 7;
+}
+
+// ReleaseAsset is the file of a release for one architecture.
+message ReleaseAsset {
+  // arch is amd64 or arm64.
+  string arch = 1;
+  // file is the name of the file on the release page.
+  string file = 2;
+  // sha256 is the SHA-256 that the panel pins for the file, lower-case hex;
+  // empty until it is known. A pinned SHA-256 never changes.
+  string sha256 = 3;
+  // sha_source says where the SHA-256 came from: builtin, digest (the
+  // release API), sums (the checksum file), tofu (the first download),
+  // stable (the signed stable list) or signed (a signed Postern release).
+  string sha_source = 4;
+  // state is unchecked, ready (downloaded, verified and tried), or unusable.
+  string state = 5;
+  // reason says why the asset is unusable.
+  string reason = 6;
+  int64 size = 7;
+  // node_id is the node whose trial run decided the state, when one did.
+  string node_id = 8;
+}
+
+// Release is one version of a component.
+message Release {
+  string component = 1;
+  string version = 2;
+  // stable says whether the version is in the stable channel.
+  bool stable = 3;
+  // prerelease is the flag of the upstream release, never read from the tag.
+  bool prerelease = 4;
+  // source says where the panel learnt of the release: builtin, upstream,
+  // stable (the signed list) or upload.
+  string source = 5;
+  int64 published_unix = 6;
+  // notes are the release notes as published, text, at most 64 KiB.
+  string notes = 7;
+  // url is the page of the release.
+  string url = 8;
+  repeated ReleaseAsset assets = 9;
+  // channels are the channels whose version this is.
+  repeated string channels = 10;
+}
+
+message ListComponentsRequest {}
+
+message ListComponentsResponse {
+  repeated Component components = 1;
+  // default_channel is the channel that nodes without one of their own
+  // follow.
+  string default_channel = 2;
+  // include_prereleases says whether the latest channel follows prereleases.
+  bool include_prereleases = 3;
+}
+
+message ListReleasesRequest {
+  string component = 1;
+}
+
+message ListReleasesResponse {
+  repeated Release releases = 1;
+}
+
+message RefreshReleasesRequest {
+  // component names the component to refresh; empty refreshes every one.
+  string component = 1;
+}
+
+message RefreshReleasesResponse {
+  repeated Component components = 1;
+}
+
+message PrepareReleaseRequest {
+  string component = 1;
+  string version = 2;
+  // archs are the architectures to prepare: amd64, arm64. Empty means those
+  // of the nodes.
+  repeated string archs = 3;
+}
+
+message PrepareReleaseResponse {
+  Release release = 1;
+}
+
+message RecheckReleaseRequest {
+  string component = 1;
+  string version = 2;
+  string arch = 3;
+}
+
+message RecheckReleaseResponse {
+  Release release = 1;
+}
+
+message SetDefaultChannelRequest {
+  // channel is stable or latest.
+  string channel = 1;
+  // confirm makes the change. Without it the call changes nothing, and only
+  // says what the change would alter.
+  bool confirm = 2;
+}
+
+message SetDefaultChannelResponse {
+  // affected_proxies are the proxies whose version the change alters: what
+  // it would alter without confirm, what it altered with it.
+  repeated AffectedProxy affected_proxies = 1;
+  // applied says whether the change was made: false without confirm.
+  bool applied = 2;
+}
+
+message SetNodeChannelRequest {
+  string node_id = 1;
+  // channel is stable, latest, or empty for the default of the panel.
+  string channel = 2;
+  // confirm makes the change, as in SetDefaultChannelRequest.
+  bool confirm = 3;
+}
+
+message SetNodeChannelResponse {
+  // affected_proxies and applied are as in SetDefaultChannelResponse.
+  repeated AffectedProxy affected_proxies = 1;
+  bool applied = 2;
+}
+
+// AffectedProxy is a proxy whose version a change of channel alters.
+message AffectedProxy {
+  string proxy_id = 1;
+  string name = 2;
+  string node_id = 3;
+  string from_version = 4;
+  string to_version = 5;
+}
+
+message StartRolloutRequest {
+  // kind is version (a channel of a component to a version), switch
+  // (selected proxies to an engine) or node (the agent and the edge of
+  // nodes to the version of the panel).
+  string kind = 1;
+  // component is the component whose channel moves, or, for a switch, the
+  // engine to switch to.
+  string component = 2;
+  // channel is the channel that a version rollout moves.
+  string channel = 3;
+  // to_version is the version to roll out; for a switch it pins the proxies
+  // to that version, and empty lets them follow their channel.
+  string to_version = 4;
+  // proxy_ids are the proxies of a switch rollout.
+  repeated string proxy_ids = 5;
+  // node_ids are the nodes of a node rollout; empty means every node.
+  repeated string node_ids = 6;
+  // mode is manual (the rollout stops after each step until ContinueRollout)
+  // or auto (it goes on by itself after pause_seconds).
+  string mode = 7;
+  // pause_seconds is the wait after a step in auto mode; 0 means the default
+  // of 120.
+  uint32 pause_seconds = 8;
+  // canary_proxy_id is the proxy that goes first; empty lets the panel pick.
+  string canary_proxy_id = 9;
+  // canary_node_id is the node that goes first when there is no canary
+  // proxy, for providers and node rollouts; empty lets the panel pick.
+  string canary_node_id = 10;
+  // agent and edge say what a node rollout updates.
+  bool agent = 11;
+  bool edge = 12;
+  // skip_offline leaves a node that is offline during its step on its
+  // previous version instead of failing the step.
+  bool skip_offline = 13;
+}
+
+message StartRolloutResponse {
+  Rollout rollout = 1;
+}
+
+// RolloutStep is one step of a rollout: the canary proxy, the rest of its
+// node, or one more node.
+message RolloutStep {
+  uint32 index = 1;
+  string node_id = 2;
+  string node_name = 3;
+  // proxy_id is set for the step of a canary proxy.
+  string proxy_id = 4;
+  // status is pending, applying, verifying, done, failed, reverted or
+  // skipped.
+  string status = 5;
+  string error = 6;
+  int64 started_unix = 7;
+  int64 finished_unix = 8;
+  // items is how many proxies the step changes, items_done how many of them
+  // are on the target, items_deferred how many were left on their previous
+  // version.
+  uint32 items = 9;
+  uint32 items_done = 10;
+  uint32 items_deferred = 11;
+  // The full diagnostics of the step's node around the step: the run before
+  // it and the run after it (also after a revert), "" while there is none,
+  // with their states; after_regressed when a check that passed before
+  // fails after. They inform: a regression never fails a step.
+  string before_run_id = 12;
+  string before_run_state = 13;
+  string after_run_id = 14;
+  string after_run_state = 15;
+  bool after_regressed = 16;
+}
+
+// Rollout is a change that goes out one step at a time.
+message Rollout {
+  string id = 1;
+  // kind is version, switch or node.
+  string kind = 2;
+  string component = 3;
+  string channel = 4;
+  string from_version = 5;
+  string to_version = 6;
+  // to_engine is the engine that a switch rollout switches to.
+  string to_engine = 7;
+  // mode is manual or auto.
+  string mode = 8;
+  uint32 pause_seconds = 9;
+  // status is preparing, running, paused, failed, completed or aborted.
+  string status = 10;
+  // current_step is the index of the step that runs, or ran last.
+  uint32 current_step = 11;
+  string error = 12;
+  repeated RolloutStep steps = 13;
+  int64 created_unix = 14;
+  int64 updated_unix = 15;
+  int64 finished_unix = 16;
+  // resume_unix is when an auto rollout goes on with its next step.
+  int64 resume_unix = 17;
+  bool agent = 18;
+  bool edge = 19;
+  bool skip_offline = 20;
+}
+
+message GetRolloutRequest {
+  string id = 1;
+}
+
+message GetRolloutResponse {
+  Rollout rollout = 1;
+}
+
+message ListRolloutsRequest {
+  // active_only leaves out the rollouts that are completed or aborted.
+  bool active_only = 1;
+  // limit is the most to return; 0 means no limit.
+  uint32 limit = 2;
+}
+
+message ListRolloutsResponse {
+  repeated Rollout rollouts = 1;
+}
+
+message ContinueRolloutRequest {
+  string id = 1;
+}
+
+message ContinueRolloutResponse {
+  Rollout rollout = 1;
+}
+
+message PauseRolloutRequest {
+  string id = 1;
+}
+
+message PauseRolloutResponse {
+  Rollout rollout = 1;
+}
+
+message RetryRolloutRequest {
+  string id = 1;
+}
+
+message RetryRolloutResponse {
+  Rollout rollout = 1;
+}
+
+message AbortRolloutRequest {
+  string id = 1;
+}
+
+message AbortRolloutResponse {
+  Rollout rollout = 1;
+}
+
+message GetPanelVersionRequest {}
+
+message GetPanelVersionResponse {
+  // version, commit and date are the build of the panel that runs.
+  string version = 1;
+  string commit = 2;
+  string date = 3;
+  // image_version is the version of the Docker image that the panel started
+  // from, which differs from version once the panel has updated itself.
+  string image_version = 4;
+  // can_update says whether UpdatePanel can run, and cannot_update_reason
+  // why it cannot.
+  bool can_update = 5;
+  string cannot_update_reason = 6;
+  // releases are the releases of Postern that the panel knows, newest first.
+  repeated Release releases = 7;
+  // last_update says what the last update of the panel did.
+  string last_update = 8;
+  // kit_signed says whether the node kit that the panel serves is signed.
+  bool kit_signed = 9;
+  // trusts_test_keys says whether the panel was built with test keys among
+  // the keys it trusts.
+  bool trusts_test_keys = 10;
+}
+
+message UpdatePanelRequest {
+  string version = 1;
+}
+
+message UpdatePanelResponse {
+  // version is the version that the panel restarts with.
+  string version = 1;
+  // restarting says that the panel is about to restart.
+  bool restarting = 2;
+}
+
+// ReleaseSource is where the releases of Postern come from.
+message ReleaseSource {
+  // kind is github or gitea.
+  string kind = 1;
+  // base_url is the API base of a Gitea; empty for GitHub.
+  string base_url = 2;
+  // repo is owner/name.
+  string repo = 3;
+  // has_token says whether a token for the source is set, has_github_token
+  // whether one for the GitHub API is. The tokens themselves are never
+  // returned.
+  bool has_token = 4;
+  bool has_github_token = 5;
+  // include_prereleases says whether the latest channel follows prereleases.
+  bool include_prereleases = 6;
+}
+
+message GetReleaseSourceRequest {}
+
+message GetReleaseSourceResponse {
+  ReleaseSource source = 1;
+}
+
+message SetReleaseSourceRequest {
+  ReleaseSource source = 1;
+  // token replaces the token of the source; empty removes it. Left unset, the
+  // token stays as it is. github_token is the same for the GitHub API.
+  optional string token = 2;
+  optional string github_token = 3;
+}
+
+message SetReleaseSourceResponse {
+  ReleaseSource source = 1;
+}

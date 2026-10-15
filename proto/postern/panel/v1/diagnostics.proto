@@ -1,0 +1,326 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// DiagnosticsService finds the first broken link of client → edge → engine →
+// egress → Telegram (spec 5.7). A run checks a scope of a node: "node" (every
+// check of every target) or "proxy:<id>" (the host checks, the proxy's
+// listener, its proxy checks and the members of its chains). The panel's own
+// checks come first (layer "panel", and "ingress.external", a probe of each
+// proxy from the panel), then the node's, streamed by the node while the run
+// lasts. A node runs one run at a time; a run lasts at most a few minutes.
+// Runs are kept 30 days, at most 100 of a node.
+//
+// The light checks run on the node all the time; the node reports the whole
+// set whenever a status changes, and LatestChecks shows the last of it.
+//
+// Every procedure needs an admin. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INVALID_ARGUMENT: a value is missing or not allowed; the message says
+//     which.
+//   - NOT_FOUND: the node, the proxy or the run does not exist.
+//   - FAILED_PRECONDITION: a fix that the node cannot apply, or that is
+//     stale (its check no longer fails), or reissue_cert for a certificate
+//     that the node does not issue; the message says why.
+//   - UNIMPLEMENTED: ListProblems, HideProblem or UnhideProblem on a panel
+//     without a problem feed.
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+service DiagnosticsService {
+  // StartRun starts a run of the checks of a scope of a node and returns its
+  // id at once; a run of that node in progress is not doubled: its id is
+  // returned. A run that it starts is audited (diagnostics.run).
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+
+  // GetRun returns a run: its state and its results so far, in order.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  rpc GetRun(GetRunRequest) returns (DiagnosticRun);
+
+  // ListRuns returns the runs of a node, or those that cover a proxy (the runs
+  // of its node of the scope "node" or of the proxy), newest first, without
+  // their results.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  // LatestChecks returns the light checks that a node reported last, or those
+  // of a proxy's scope.
+  rpc LatestChecks(LatestChecksRequest) returns (LatestChecksResponse);
+
+  // ApplyFix applies the fix that a result offers: a change of the desired
+  // state (a nonce, the proxy's egress chain, the node's DNS mode, the
+  // subscription's refresh), audited (diagnostics.fix) and recorded as the
+  // event diagnostics.fix_applied. Its before-run is the run that offered
+  // it, or a copy of the light checks when they offered it; once the node
+  // has applied the change, an after-run of the target's scope is related
+  // to it. FAILED_PRECONDITION: the node cannot apply the fix (the message
+  // says why), the result no longer offers it, or the chain is not one the
+  // node can use; reissue_cert for a proxy whose certificate the node does
+  // not issue (imported or behind a web server).
+  rpc ApplyFix(ApplyFixRequest) returns (ApplyFixResponse);
+
+  // ListProblems returns what is wrong now across the fleet (Task 10c). It
+  // leaves out the problems that an admin hid, unless include_hidden is set.
+  rpc ListProblems(ListProblemsRequest) returns (ListProblemsResponse);
+
+  // HideProblem hides a problem of the feed until it changes: until its
+  // severity or its summary is not what it is now, or it clears. Audited
+  // (problem.hide). NOT_FOUND: there is no such problem now.
+  rpc HideProblem(HideProblemRequest) returns (HideProblemResponse);
+
+  // UnhideProblem shows a hidden problem again; a problem that is not hidden
+  // is no error. Audited (problem.unhide) when there was a hide.
+  rpc UnhideProblem(UnhideProblemRequest) returns (UnhideProblemResponse);
+
+  // ListJournal returns the history of events and fixes (Task 10c).
+  rpc ListJournal(ListJournalRequest) returns (ListJournalResponse);
+}
+
+// CheckResult is one result of a check.
+message CheckResult {
+  // id names the check, such as "host.docker" or "panel.connection".
+  string id = 1;
+  // layer is host, ingress, engine, egress, web, e2e or panel.
+  string layer = 2;
+  // target is "" (the node), "listener:<id>", "proxy:<id>" or
+  // "member:<chain id>/<member key>".
+  string target = 3;
+  // status is "ok", "warn", "fail" or "skip".
+  string status = 4;
+  // summary says what was found, at most 200 bytes.
+  string summary = 5;
+  // evidence backs a warn or a fail, plain text, at most 2 KiB; "" otherwise.
+  // Secrets and client addresses are left out of it.
+  string evidence = 6;
+  // hint says what to look at next.
+  string hint = 7;
+  // fix names the fix that the panel can apply: recreate_instance,
+  // roll_edge, change_egress, refresh_subscription, set_dns_mode_doh or
+  // reissue_cert; "" for none.
+  string fix = 8;
+  // fix_available says whether the fix can be applied now: false, with the
+  // reason in fix_unavailable_reason, when the node lacks the capability the
+  // fix needs or the fix does not fit the target.
+  bool fix_available = 9;
+  string fix_unavailable_reason = 10;
+  // vantage is where the check ran: "panel" or "node".
+  string vantage = 11;
+  // checked_unix is when the check ran, Unix seconds.
+  int64 checked_unix = 12;
+  // since_unix is since when a light check has had its status, Unix seconds;
+  // 0 in a run.
+  int64 since_unix = 13;
+}
+
+// DiagnosticRun is a run of the checks of a scope of a node.
+message DiagnosticRun {
+  string id = 1;
+  string node_id = 2;
+  // scope is "node" or "proxy:<id>".
+  string scope = 3;
+  // reason is "manual", "before_change" or "after_change".
+  string reason = 4;
+  // change names the change that a before or after run is about.
+  string change = 5;
+  // related_run_id is the before-run of an after-run.
+  string related_run_id = 6;
+  // state is "running", "done", "partial" (the run ended before the node
+  // finished its checks), "skipped" (the node's checks did not run: the
+  // panel.connection result says why) or "failed" (error says why).
+  string state = 7;
+  string error = 8;
+  int64 started_unix = 9;
+  // finished_unix is 0 while the run is running.
+  int64 finished_unix = 10;
+  // results are the results so far, in order: the panel's first.
+  repeated CheckResult results = 11;
+  // regressed says that a check that was ok or warn in the related run is
+  // fail in this one.
+  bool regressed = 12;
+  // The number of results of each status: of the results so far while the
+  // run is running. ListRuns has them too, without the results.
+  uint32 ok_count = 13;
+  uint32 warn_count = 14;
+  uint32 fail_count = 15;
+  uint32 skip_count = 16;
+}
+
+// Problem is something wrong now.
+message Problem {
+  // severity is "error" or "warning"; the feed lists the errors first.
+  string severity = 1;
+  // kind is what is wrong: node.offline, node.error, node.state_rejected,
+  // node.last_error, proxy.failed, proxy.down (by the panel's probes), check
+  // (a light check of the node in warn or fail: check_id and target name
+  // it), geoip.missing, geoip.stale or edge.outdated (check_id
+  // panel.versions, the check whose fix roll_edge ApplyFix applies with no
+  // offered run).
+  string kind = 2;
+  // node_id is "" for a problem of the panel (geoip.*).
+  string node_id = 3;
+  // proxy_id is the proxy that the problem is about, "" for a node.
+  string proxy_id = 4;
+  string summary = 5;
+  string hint = 6;
+  // since_unix is since when, Unix seconds; 0 when the panel does not know.
+  int64 since_unix = 7;
+  string check_id = 8;
+  string target = 9;
+  // fix names the fix that the panel can apply, as CheckResult.fix.
+  string fix = 10;
+  bool fix_available = 11;
+  string node_name = 12;
+  string proxy_name = 13;
+  string fix_unavailable_reason = 14;
+  // key names the problem across refreshes: its source, node, check id or
+  // kind, and target. HideProblem and UnhideProblem take it.
+  string key = 15;
+  // hidden is set on a problem that an admin hid (only with include_hidden).
+  bool hidden = 16;
+  // hidden_at_unix is when it was hidden, Unix seconds; 0 when it is not.
+  int64 hidden_at_unix = 17;
+}
+
+message StartRunRequest {
+  string node_id = 1;
+  // scope is "node" or "proxy:<id>" of a proxy of the node; "" is "node".
+  string scope = 2;
+}
+
+message StartRunResponse {
+  string run_id = 1;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message ListRunsRequest {
+  // node_id or proxy_id names whose runs; one of them is required.
+  string node_id = 1;
+  string proxy_id = 2;
+  // limit is at most 50; 0 is 20.
+  uint32 limit = 3;
+}
+
+message ListRunsResponse {
+  repeated DiagnosticRun runs = 1;
+}
+
+message LatestChecksRequest {
+  // node_id or proxy_id names whose checks; one of them is required.
+  string node_id = 1;
+  string proxy_id = 2;
+}
+
+message LatestChecksResponse {
+  // results are the light checks, by check id and target.
+  repeated CheckResult results = 1;
+}
+
+message ApplyFixRequest {
+  string node_id = 1;
+  string check_id = 2;
+  string target = 3;
+  string fix = 4;
+  // chain_id is the chain that change_egress moves the proxy to.
+  string chain_id = 5;
+  // offered_run_id is the run that offered the fix, "" for the light checks.
+  string offered_run_id = 6;
+}
+
+message ApplyFixResponse {
+  // before_run_id is the run that the after-run is compared with.
+  string before_run_id = 1;
+  // generation is the desired generation of the node that has the fix; the
+  // after-run starts once the node has applied it.
+  uint64 generation = 2;
+}
+
+// ListProblemsRequest narrows the feed; empty is the whole fleet.
+message ListProblemsRequest {
+  // node_id keeps the problems of a node and of its proxies.
+  string node_id = 1;
+  // proxy_id keeps the problems of a proxy.
+  string proxy_id = 2;
+  // include_hidden lists the hidden problems too, marked hidden.
+  bool include_hidden = 3;
+}
+
+message ListProblemsResponse {
+  // problems are worst first, then newest first.
+  repeated Problem problems = 1;
+}
+
+message HideProblemRequest {
+  // key is Problem.key; at most 1024 bytes.
+  string key = 1;
+}
+
+message HideProblemResponse {}
+
+message UnhideProblemRequest {
+  // key is Problem.key; at most 1024 bytes.
+  string key = 1;
+}
+
+message UnhideProblemResponse {}
+
+// ListJournalRequest reads one page of the journal, newest first: the events
+// (source "events" or "") or the audit log of what the admins did (source
+// "audit"). A filter of the other source must be empty.
+message ListJournalRequest {
+  string source = 1;
+  // Events: of a node, of a proxy, of at least a severity ("info",
+  // "warning" or "error"; "" for all), of kinds that begin with kind_prefix.
+  string node_id = 2;
+  string proxy_id = 3;
+  string min_severity = 4;
+  string kind_prefix = 5;
+  // Both sources: from from_unix (inclusive) to to_unix (exclusive), Unix
+  // seconds; 0 leaves that end open.
+  int64 from_unix = 6;
+  int64 to_unix = 7;
+  // Audit: of an admin, of actions that begin with action_prefix.
+  string admin_id = 8;
+  string action_prefix = 9;
+  // limit is at most 200; 0 is 50.
+  uint32 limit = 10;
+  // cursor is the next_cursor of the page before, "" for the first page.
+  string cursor = 11;
+}
+
+message ListJournalResponse {
+  // events are filled for the source "events", audit for "audit".
+  repeated JournalEvent events = 1;
+  repeated JournalAudit audit = 2;
+  // next_cursor reads the next page; "" when this one is the last.
+  string next_cursor = 3;
+}
+
+// JournalEvent is something that happened to a node or a proxy.
+message JournalEvent {
+  string id = 1;
+  int64 ts_unix = 2;
+  string node_id = 3;
+  string proxy_id = 4;
+  string kind = 5;
+  // severity is "info", "warning" (or "warn") or "error".
+  string severity = 6;
+  string message = 7;
+  map<string, string> details = 8;
+}
+
+// JournalAudit is something that an admin did, such as diagnostics.fix.
+message JournalAudit {
+  string id = 1;
+  int64 ts_unix = 2;
+  // admin_id is "" for what no admin did; admin_name is "" also when the
+  // admin is gone.
+  string admin_id = 3;
+  string admin_name = 4;
+  string action = 5;
+  string target = 6;
+  map<string, string> details = 7;
+}

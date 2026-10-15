@@ -1,0 +1,6 @@
+-- Reserved, and empty on purpose. Slices 5 and 6 each kept the number 0011 for
+-- a migration that neither of them needed, and 0012 came after 0010. A
+-- migration that is added now is numbered above the highest one: the store
+-- refuses one below a migration that a database already has (checkOrder). A
+-- migration with no statement, such as this one, only fills its number, and is
+-- recorded on a database that is past it.

@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// SettingsService holds the settings of the statistics: how long they are
+// kept, what is kept of the addresses of clients (the IP policy), and the
+// probes of the panel; and how much room the database takes.
+//
+// A change of the IP policy deletes, in the same transaction, what the new
+// policy does not keep: leaving full deletes where addresses were seen, off
+// deletes the countries too. A change of the policy, of ip_days or of the
+// extra probe sources goes to every node.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INVALID_ARGUMENT: a setting is out of its range, or an extra probe
+//     source is not a single address (a prefix is refused).
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+service SettingsService {
+  // GetStatsSettings returns the settings, and the addresses that the nodes
+  // see the panel come from.
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  rpc GetStatsSettings(GetStatsSettingsRequest) returns (GetStatsSettingsResponse);
+
+  // UpdateStatsSettings stores the settings as a whole. It is audited
+  // (settings.update). It answers as GetStatsSettings does.
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc UpdateStatsSettings(UpdateStatsSettingsRequest) returns (GetStatsSettingsResponse);
+
+  // GetStorage says how much room the database takes.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc GetStorage(GetStorageRequest) returns (Storage);
+}
+
+// StatsSettings are the settings of the statistics.
+message StatsSettings {
+  // minutes_hours is how long minutes are kept, 6 to 168 hours.
+  uint32 minutes_hours = 1;
+  // hours_days is how long hours are kept, 7 to 730 days.
+  uint32 hours_days = 2;
+  // ip_days is how long where an address was seen is kept, 1 to 30 days,
+  // on the panel and in the buffers of the nodes.
+  uint32 ip_days = 3;
+  // ip_policy is "full", "countries" or "off".
+  string ip_policy = 4;
+  // probe_interval_minutes is how often the panel probes every proxy, 0 to
+  // 60 minutes; 0 is never.
+  uint32 probe_interval_minutes = 5;
+  // extra_probe_sources are addresses besides the panel's own that the nodes
+  // let probe their proxies: at most 16, each a single IP address.
+  repeated string extra_probe_sources = 6;
+}
+
+// PanelAddress is an address that a node sees the panel come from.
+message PanelAddress {
+  string node_id = 1;
+  string addr = 2;
+  // shared is an address that more than the panel may have: private
+  // (RFC 1918), unique local, link-local or shared (100.64.0.0/10). Letting
+  // it probe the proxies lets a whole network through; Settings warns.
+  bool shared = 3;
+}
+
+message GetStatsSettingsRequest {}
+
+message GetStatsSettingsResponse {
+  StatsSettings settings = 1;
+  repeated PanelAddress panel_addresses = 2;
+}
+
+message UpdateStatsSettingsRequest {
+  StatsSettings settings = 1;
+}
+
+message GetStorageRequest {}
+
+// Storage is how much room the database takes: the size of its file, the
+// part of it that is free pages, and the rows of the tables that grow, by
+// table name.
+message Storage {
+  int64 file_bytes = 1;
+  int64 free_bytes = 2;
+  map<string, int64> rows = 3;
+}

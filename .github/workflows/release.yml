@@ -1,0 +1,383 @@
+name: Release
+
+# A tag v* is a release, made by five jobs, each with only what it needs:
+#
+#   test     the Go and web tests.
+#   build    scripts/release.sh build: the UI, the four binaries of Postern and
+#            the two of the Psiphon client (psiphon-core), and their
+#            MANIFEST, as the artifact unsigned-dist; the SHA-256 of MANIFEST is
+#            its output. No secret: npm and the build run here, and only here.
+#   sign     in the environment "release", which alone holds the release key:
+#            scripts/release.sh sign builds its tool from the tag, checks
+#            unsigned-dist against that SHA-256 (and the binaries against their
+#            MANIFEST, their command, architecture, version and commit) without
+#            running anything of it, then signs, and hands on signed-dist. No npm
+#            and no build of the binaries run here.
+#   image    the panel image and then the node image, each for amd64 and arm64,
+#            built of the signed binaries (--build-arg PREBUILT=dist) and pushed
+#            to the repository variable POSTERN_IMAGE and to the node image
+#            that the build job built the panel binaries with (its output, of
+#            POSTERN_NODE_IMAGE); either is left out when its variable is not
+#            set. Both log in with the one registry account. It runs before
+#            publish, so that a release is only published with its images: when
+#            one fails, nothing is out.
+#   publish  the release with its notes and every file of signed-dist: on GitHub
+#            with gh, on Gitea with its API. It alone may write to the
+#            repository, and it has no key.
+#
+# It runs on GitHub Actions and on Gitea Actions (which reads .github/workflows
+# too). Gitea knows no protected environments, so there the key is a secret of
+# the repository and the isolation is that of the jobs only; docs/releasing.md
+# has the secrets, the variables and what a Gitea instance and its runner need.
+# The stable key, which signs the list of stable engines, is never here.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Go
+        run: |
+          go vet ./...
+          # The store package alone takes some ten minutes with -race on a runner.
+          go test -race -timeout 30m ./...
+      - name: Web
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm test -- --run
+
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      manifest_sha256: ${{ steps.build.outputs.manifest_sha256 }}
+      # The node image that the panel binaries were built with: the image job
+      # pushes this one, so that the two cannot differ.
+      node_image: ${{ steps.build.outputs.node_image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build
+        id: build
+        env:
+          TAG: ${{ github.ref_name }}
+          # Test keys go into prereleases only (release.sh refuses them for a
+          # release): the repository variable, for a tag with a "-" in it.
+          POSTERN_EXTRA_PUBLIC_KEYS: ${{ contains(github.ref_name, '-') && vars.POSTERN_EXTRA_PUBLIC_KEYS || '' }}
+          # The node image that the image job pushes: the panel binaries take
+          # it as their default node image (tagged with the version).
+          POSTERN_NODE_IMAGE: ${{ vars.POSTERN_NODE_IMAGE }}
+        run: |
+          bash scripts/release.sh build "$TAG" unsigned
+          echo "manifest_sha256=$(sha256sum unsigned/MANIFEST | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "node_image=$POSTERN_NODE_IMAGE" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-dist
+          path: unsigned/
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    name: Sign
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The release key is a secret of this environment only, which has to be
+    # limited to the tags v* and may ask for an approval (docs/releasing.md).
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 1.27.x
+          # No cache: one saved by a job that ran npm could hold a trojaned
+          # package that the build of the signing tool would link (S5-12).
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-dist
+          path: unsigned
+      - name: Check and sign
+        env:
+          TAG: ${{ github.ref_name }}
+          POSTERN_RELEASE_KEY: ${{ secrets.POSTERN_RELEASE_KEY }}
+          POSTERN_RELEASE_KEY_PASSWORD: ${{ secrets.POSTERN_RELEASE_KEY_PASSWORD }}
+          POSTERN_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          POSTERN_EXTRA_PUBLIC_KEYS: ${{ contains(github.ref_name, '-') && vars.POSTERN_EXTRA_PUBLIC_KEYS || '' }}
+        run: bash scripts/release.sh sign "$TAG" unsigned dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  image:
+    name: Images
+    needs: [build, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # The images, when they go to the registry of the forge with the token
+      # of the job.
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # the tags, for latest
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-dist
+          path: dist
+      - name: Panel and node images
+        env:
+          IMAGE: ${{ vars.POSTERN_IMAGE }}
+          # The node image of the build job, which the panel binaries carry.
+          NODE_IMAGE: ${{ needs.build.outputs.node_image }}
+          TAG: ${{ github.ref_name }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          REVISION: ${{ github.sha }}
+          RUN: ${{ github.run_id }}
+          # The account of the registry: these secrets when they are set, else
+          # the job's own (GHCR on GitHub, the registry of the Gitea instance).
+          REGISTRY_USER: ${{ secrets.POSTERN_REGISTRY_USER || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.POSTERN_REGISTRY_PASSWORD || github.token }}
+        run: |
+          if [ -z "$IMAGE" ]; then
+            echo "The repository variable POSTERN_IMAGE is not set: no panel image is pushed."
+          fi
+          if [ -z "$NODE_IMAGE" ]; then
+            echo "The repository variable POSTERN_NODE_IMAGE is not set: no node image is pushed."
+          fi
+          if [ -z "$IMAGE$NODE_IMAGE" ]; then
+            exit 0
+          fi
+          if ! docker info > /dev/null 2>&1; then
+            echo "POSTERN_IMAGE or POSTERN_NODE_IMAGE is set, and this runner has no Docker: the images cannot be built." >&2
+            exit 1
+          fi
+          builder=postern-release-$RUN
+          registries=()
+          cleanup() {
+            docker buildx rm "$builder" > /dev/null 2>&1 || true
+            for r in "${registries[@]}"; do
+              docker logout "$r" > /dev/null 2>&1 || true
+            done
+          }
+          trap cleanup EXIT
+          # login <image>: once for each registry. The registry is the first
+          # part of the name, when it looks like a host.
+          login() {
+            local registry=${1%%/*} r
+            case $registry in
+              *.* | *:* | localhost) ;;
+              *) registry=docker.io ;;
+            esac
+            for r in "${registries[@]}"; do
+              [ "$r" != "$registry" ] || return 0
+            done
+            registries+=("$registry")
+            printf '%s' "$REGISTRY_PASSWORD" | docker login "$registry" --username "$REGISTRY_USER" --password-stdin
+          }
+
+          # latest is the newest release, never a prerelease, nor a fix of an
+          # older line.
+          newest=$(git tag --list 'v*' --sort=-v:refname | grep -v -- - | head -n 1 || true)
+
+          # The image of the other architecture runs a step of its build (apk
+          # add) under QEMU.
+          case $(uname -m) in
+            x86_64 | amd64) emulated=arm64 ;;
+            aarch64 | arm64) emulated=amd64 ;;
+            *) echo "a release image is built on amd64 or arm64, and this runner is $(uname -m)" >&2; exit 1 ;;
+          esac
+          docker run --rm --privileged \
+            tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 \
+            --install "$emulated"
+          docker buildx create --name "$builder" --driver docker-container --use
+
+          # push <image> <Dockerfile>: the image of the release for both
+          # architectures, as <image>:<tag> and, for the newest release, as
+          # <image>:latest. The artifact does not keep the modes of the files;
+          # the Dockerfile sets them. No provenance: the index then has the two
+          # images only, which every registry shows as they are.
+          push() {
+            local tags=(--tag "$1:$TAG")
+            if [ "$TAG" = "$newest" ]; then
+              tags+=(--tag "$1:latest")
+            fi
+            login "$1"
+            docker buildx build --platform linux/amd64,linux/arm64 \
+              --build-arg PREBUILT=dist -f "$2" \
+              --label "org.opencontainers.image.source=$SOURCE" \
+              --label "org.opencontainers.image.version=$TAG" \
+              --label "org.opencontainers.image.revision=$REVISION" \
+              --provenance=false "${tags[@]}" --push .
+          }
+          if [ -n "$IMAGE" ]; then
+            push "$IMAGE" deploy/panel/Dockerfile
+          fi
+          # The node image that the panel of this release installs nodes from:
+          # the build job gave the panel binaries POSTERN_NODE_IMAGE as their
+          # default, which the panel tags with its version.
+          if [ -n "$NODE_IMAGE" ]; then
+            push "$NODE_IMAGE" deploy/node/Dockerfile
+          fi
+
+  publish:
+    name: Publish
+    needs: [sign, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The release and its files. On Gitea, contents covers the releases as
+      # well (https://docs.gitea.com/usage/actions/token-permissions); Gitea's
+      # own scope "releases" is not one that GitHub knows, and GitHub refuses a
+      # workflow that names it.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # the notes are made of the commits since the tag before
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 1.27.x
+          # The cache of a job that ran npm is not trusted here.
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-dist
+          path: dist
+
+      - name: Notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The commits after the tag before: for a release, the release
+          # before (its prereleases are left out); for a prerelease, any tag.
+          case $TAG in
+            *-*) previous=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2> /dev/null || true) ;;
+            *) previous=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*' "$TAG^" 2> /dev/null || true) ;;
+          esac
+          echo "The notes of $TAG are the commits after ${previous:-the first one}."
+          go run ./scripts/release changelog --from "$previous" --to "$TAG" > "${RUNNER_TEMP:-/tmp}/postern-notes.md"
+          cat "${RUNNER_TEMP:-/tmp}/postern-notes.md"
+
+      # GitHub is github.com only: GitHub Enterprise Server takes the Gitea
+      # path, and fails there (docs/releasing.md).
+      - name: Publish on GitHub
+        if: github.server_url == 'https://github.com'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          case $TAG in
+            *-*) prerelease=(--prerelease) ;;
+          esac
+          # gh keeps the release a draft until every file is uploaded, and
+          # refuses a tag that has a release already.
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file "${RUNNER_TEMP:-/tmp}/postern-notes.md" "${prerelease[@]}" dist/*
+
+      - name: Publish on Gitea
+        if: github.server_url != 'https://github.com'
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          SERVER: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          api_base=$SERVER/api/v1/repos/$REPOSITORY
+          prerelease=false
+          case $TAG in
+            *-*) prerelease=true ;;
+          esac
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          # The token goes to curl in a file of headers, not on its command line.
+          (umask 077 && printf 'Authorization: token %s\n' "$GITEA_TOKEN" > "$tmp/headers")
+
+          # api METHOD PATH [curl arguments]: the answer goes to $tmp/answer; one
+          # that is not 2xx is printed, and fails the step.
+          api() {
+            local method=$1 path=$2 status
+            shift 2
+            status=$(curl --silent --show-error --output "$tmp/answer" --write-out '%{http_code}' \
+              --request "$method" --header @"$tmp/headers" "$@" "$api_base$path")
+            case $status in
+              2??) ;;
+              *)
+                echo "$method $path: HTTP $status" >&2
+                cat "$tmp/answer" >&2
+                return 1
+                ;;
+            esac
+          }
+
+          # node writes and reads the JSON: jq is not on every runner. The
+          # release is a draft until every file is there, so that nobody sees
+          # it without them.
+          node -e '
+            const [tag, sha, notes, prerelease] = process.argv.slice(1);
+            process.stdout.write(JSON.stringify({
+              tag_name: tag, target_commitish: sha, name: tag,
+              body: require("fs").readFileSync(notes, "utf8"),
+              draft: true, prerelease: prerelease === "true",
+            }));
+          ' "$TAG" "$SHA" "${RUNNER_TEMP:-/tmp}/postern-notes.md" "$prerelease" > "$tmp/release.json"
+          api POST /releases --header 'Content-Type: application/json' --data-binary @"$tmp/release.json"
+          id=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).id))' "$tmp/answer")
+
+          # Each file is an attachment: multipart/form-data with the file in the
+          # field "attachment", and its name in the query.
+          for file in dist/*; do
+            name=$(basename "$file")
+            echo "uploading $name"
+            api POST "/releases/$id/assets?name=$name" --form "attachment=@$file"
+          done
+          api PATCH "/releases/$id" --header 'Content-Type: application/json' --data-binary '{"draft":false}'
+          echo "published $SERVER/$REPOSITORY/releases/tag/$TAG"

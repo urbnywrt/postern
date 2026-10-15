@@ -1,0 +1,535 @@
+{
+  "insights": {
+    "publicPage": {
+      "title": "Public page",
+      "intro": "A page on a domain of its own that lists the proxies you choose as a board, each row of which connects its proxy, so that you hand out one address instead of links one by one.",
+      "warning": "Everything on the page is public, including the secrets in the links: anyone who opens the address can use every proxy listed. List only proxies that are meant for everyone.",
+      "enabled": "Serve the page",
+      "enabledHint": "The page is served for the host below. The admin pages are never served on that host, also while the page is off.",
+      "host": "Host",
+      "hostHint": "The domain name the page is served for, such as proxies.example.com, pointed at this panel. It must not be a name the admin pages are reached on.",
+      "link": "The page is served at",
+      "openLink": "Open the public page",
+      "pageTitle": "Title",
+      "pageTitleHint": "Plain text, one line or two. The second line is shown in colour.",
+      "body": "Text",
+      "bodyHint": "Markdown without raw HTML, shown under the title. Empty shows the default text. Headings are shifted one level down; images show as their alt text.",
+      "footer": "Footer",
+      "footerHint": "Empty shows the default text. Plain text; line breaks are kept.",
+      "unavailable": "Unavailable proxies",
+      "unavailableHint": "A proxy is unavailable while it is paused, its node is offline or its probes fail. Mark shows the code, the name, the note and \"unavailable\" only, with no link or parameters; hide leaves the item out.",
+      "unavailableMark": "Mark as unavailable",
+      "unavailableHide": "Hide",
+      "allowIndexing": "Allow search engines to index the page",
+      "allowIndexingHint": "Off, search engines are asked neither to crawl nor to index the page: robots.txt disallows everything and every response says noindex. Leave it off unless the address is meant to be found.",
+      "defaultLocale": "Default language",
+      "defaultLocaleHint": "The language of the labels when the browser of the visitor does not say.",
+      "items": "Proxies on the page",
+      "itemsHint": "In this order. Each proxy is listed once, with a public name and a note of its own; the name you see in the panel is never shown.",
+      "noItems": "No proxies are listed yet.",
+      "addProxy": "Add a proxy",
+      "addProxyPlaceholder": "Pick a proxy",
+      "add": "Add",
+      "allAdded": "Every proxy is on the page.",
+      "noProxies": "There are no proxies to list yet.",
+      "publicName": "Public name",
+      "publicNote": "Note",
+      "code": "Code",
+      "codeHint": "Empty: the country of the server",
+      "codeAuto": "auto",
+      "moveUp": "Move {{name}} up",
+      "moveDown": "Move {{name}} down",
+      "remove": "Remove {{name}} from the page",
+      "save": "Save",
+      "saved": "The public page was saved.",
+      "refused": "The panel refused the change",
+      "confirm": {
+        "title": "Serve the public page?",
+        "message_one": "The page at https://{{host}}/ will show the links of {{count}} proxy to anyone who opens it, secrets included. Once it is served, anyone who knows the address can connect through it.",
+        "message_other": "The page at https://{{host}}/ will show the links of {{count}} proxies to anyone who opens it, secrets included. Once it is served, anyone who knows the address can connect through them.",
+        "confirm": "Serve the page"
+      },
+      "validation": {
+        "host": "Enter a domain name of at least two labels, such as proxies.example.com, without a scheme, port or path. An IP address is not accepted.",
+        "hostRequired": "The page needs a host before it can be served.",
+        "bytesLong": "At most {{max}} bytes",
+        "tooMany": "At most {{max}} proxies",
+        "titleLines": "At most two lines",
+        "code": "Up to {{max}} Latin letters and digits"
+      },
+      "saveFailed": "The page was not saved",
+      "proxiesLoading": "Loading the proxies…",
+      "check": {
+        "button": "Check",
+        "failed": "The check failed: {{reason}}",
+        "dns": "DNS",
+        "dnsFound": "points to {{addresses}}",
+        "dnsNotFound": "not found",
+        "https": "HTTPS",
+        "httpsOk": "works, certificate until {{date}}",
+        "notPanel": "Something other than this panel answered: check where the name points.",
+        "hint": "The certificate comes from the reverse proxy in front of the panel. If you use Caddy, turn on on-demand TLS",
+        "hintLink": "as the guide says",
+        "unsaved": "The saved host {{host}} is checked. Save to check the new one."
+      },
+      "proxiesFailed": "The proxies could not be loaded: {{reason}}"
+    },
+    "ranges": {
+      "label": "Range",
+      "1h": "1 h",
+      "24h": "24 h",
+      "7d": "7 d",
+      "30d": "30 d",
+      "90d": "90 d",
+      "1y": "1 y"
+    },
+    "chart": {
+      "step": "Each point covers {{period}}.",
+      "thinned": "Each point covers {{period}}: amounts are summed over it, peaks are its highest value and levels its average."
+    },
+    "stats": {
+      "title": "Statistics",
+      "traffic": {
+        "title": "Traffic",
+        "down": "Download",
+        "up": "Upload",
+        "totalDown": "Downloaded",
+        "totalUp": "Uploaded",
+        "empty": "No traffic was reported in this range."
+      },
+      "connections": {
+        "title": "Connections",
+        "new": "New connections",
+        "peak": "Most open at once",
+        "totalNew": "Opened in the range",
+        "maxPeak": "Most open at once",
+        "empty": "No connections were reported in this range."
+      },
+      "devices": {
+        "title": "Unique IPs (peak)",
+        "series": "Unique IPs (peak)",
+        "max": "Highest in the range",
+        "hint": "The most unique client IPs of one minute in each period.",
+        "empty": "No clients were reported in this range."
+      }
+    },
+    "countries": {
+      "title": "Countries",
+      "country": "Country",
+      "bytes": "Traffic",
+      "ipsPeak": "Peak unique IPs in a minute",
+      "unknown": "Unknown",
+      "empty": "No country was recorded in this range.",
+      "off": "The IP policy is \"off\": the countries of clients are not kept. Settings can change it.",
+      "noDatabase": "The panel has no country database yet, so the countries of new clients are unknown."
+    },
+    "ipHistory": {
+      "title": "IP history",
+      "ip": "IP address",
+      "country": "Country",
+      "firstSeen": "First seen",
+      "lastSeen": "Last seen",
+      "bytes": "Bytes since first seen",
+      "filter": "Country",
+      "allCountries": "All countries",
+      "empty": "No client address was seen.",
+      "shown": "{{from}}–{{to}} of {{total}}",
+      "policyNote": "Client addresses are kept only under the IP policy \"full\". The policy is \"{{policy}}\": {{meaning}}",
+      "policyChanged": "Client addresses are kept only under the IP policy \"full\", and the policy has changed: {{reason}}",
+      "meaning": {
+        "full": "client addresses are kept.",
+        "countries": "only the countries of clients are kept, never their addresses.",
+        "off": "nothing about client addresses is kept."
+      }
+    },
+    "probes": {
+      "title": "Probes",
+      "intro": "A probe connects to the proxy as a client would: from the panel through the link host, and from the node through its test listener. Probes are kept for 7 days.",
+      "range24h": "Over the last 24 hours.",
+      "range7d": "Over the last 7 days.",
+      "vantage": {
+        "panel": "From the panel",
+        "node": "From the node"
+      },
+      "uptime": "{{percent}} ({{ok}} of {{total}})",
+      "none": "No probes in this range.",
+      "failures": "Recent failures",
+      "noFailures": "No probe failed in this range.",
+      "time": "Time",
+      "from": "From",
+      "error": "Error",
+      "probeNow": "Probe now",
+      "ok": "The proxy answered in {{latency}}.",
+      "failed": "The probe failed: {{error}}",
+      "refused": "The panel did not probe the proxy: {{reason}}"
+    },
+    "node": {
+      "title": "Statistics",
+      "empty": "The node reported no statistics in this range.",
+      "cpu": "CPU",
+      "cpuSeries": "CPU",
+      "memory": "Memory",
+      "memUsed": "Used",
+      "memTotal": "Total",
+      "load": "Load average (1 min)",
+      "load1": "Load",
+      "disk": "Disk",
+      "diskUsed": "Used",
+      "diskTotal": "Total",
+      "network": "Network",
+      "rx": "Received",
+      "tx": "Sent",
+      "connections": "Open connections",
+      "conns": "Connections",
+      "traffic": "Traffic of the proxies",
+      "down": "Download",
+      "up": "Upload",
+      "devices": "Unique IPs, sum of proxies",
+      "refusals": "Edge refusals",
+      "refusedPrehello": "Refused before the ClientHello",
+      "refusedTotal": "Refused in all",
+      "evictedPrehello": "Evicted before the ClientHello"
+    },
+    "egressHistory": {
+      "title": "Egress history",
+      "intro": "Each member of the chains of the node, hour by hour: the minutes it was up, down or unknown, its latency, and when its exit IP changed. Hours are kept for 30 days.",
+      "empty": "No member of a chain was checked in this range.",
+      "up": "Up",
+      "down": "Down",
+      "unknown": "Unknown",
+      "uptime": "Minutes by status",
+      "latency": "Latency",
+      "latencyAvg": "Average",
+      "latencyMax": "Highest",
+      "exitChanges": "Exit IP changes",
+      "exitUnknown": "No exit IP is known.",
+      "exitSteady": "The exit IP stayed {{ip}} over the range."
+    },
+    "attribution": {
+      "text": "IP Geolocation by DB-IP"
+    },
+    "overview": {
+      "cpu": "CPU",
+      "ram": "RAM",
+      "conns": "Connections",
+      "traffic": "Traffic since midnight",
+      "trafficValue": "↓ {{down}} · ↑ {{up}}",
+      "noMinute": "No statistics in the last 3 minutes",
+      "topProxies": {
+        "title": "Top proxies (24 h)",
+        "proxy": "Proxy",
+        "node": "Node",
+        "traffic": "Traffic",
+        "conns": "New connections",
+        "devices": "Unique IPs (peak)",
+        "empty": "No proxy carried traffic in the last 24 hours."
+      },
+      "countries": {
+        "title": "Countries (24 h)",
+        "more": "And {{count}} more on the page of each proxy."
+      }
+    },
+    "settings": {
+      "stats": {
+        "title": "Statistics and privacy",
+        "intro": "How long the statistics are kept, what is kept of the addresses of clients, and the probes of the panel.",
+        "minutesHours": "Keep minutes, hours",
+        "minutesHoursHint": "6 to 168 hours. Charts over shorter ranges are drawn from minutes.",
+        "hoursDays": "Keep hours, days",
+        "hoursDaysHint": "7 to 730 days. Days are kept for good.",
+        "ipDays": "Keep the IP history, days",
+        "ipDaysHint": "1 to 30 days, on the panel and in the buffers of the nodes; only under the IP policy \"full\".",
+        "range": "A whole number from {{min}} to {{max}}",
+        "ipPolicy": "IP policy",
+        "policy": {
+          "full": "Full: the IP history, with the last visit and the country",
+          "countries": "Countries: totals by country, no IP addresses kept",
+          "off": "Off: nothing about client addresses"
+        },
+        "privacy": "The IP addresses of users in countries that block are sensitive data, so they are kept for a short time that you choose. Under \"full\" the panel keeps where each client address was seen, with its last visit and its country; under \"countries\" only totals by country, and no address is kept anywhere; under \"off\" nothing.",
+        "probeInterval": "Probe every proxy every, minutes",
+        "probeIntervalHint": "0 to 60; 0 turns the probes of the panel off. Panel probes reveal the fleet to anyone who can observe the panel's traffic: they connect to every proxy from the panel's address.",
+        "extraSources": "Extra probe sources",
+        "extraSourcesHint": "Addresses besides the panel's own that the nodes let probe their proxies without taking a device slot: single IP addresses, one per line, at most 16. A prefix is refused.",
+        "extraSourceInvalid": "{{value}} is not a single IP address",
+        "extraTooMany": "At most {{max}} addresses",
+        "panelAddresses": "The panel's addresses, as the nodes see them",
+        "panelAddressesHint": "Each node exempts these exact addresses from the limits of its proxies, so that a probe takes no device slot.",
+        "noPanelAddresses": "No node has seen the panel's address yet.",
+        "node": "Node",
+        "address": "Address",
+        "shared": "Shared address: everyone behind this address is exempt from the limits of every proxy",
+        "save": "Save",
+        "saved": "The statistics settings were saved.",
+        "refused": "The panel refused the change",
+        "confirm": {
+          "title": "Delete statistics?",
+          "ipHistory": "Leaving \"full\" deletes the IP history: every client address that the panel has kept is deleted now, and the nodes scrub their buffers.",
+          "countryHistory": "The policy \"off\" deletes the country history: every statistic by country is deleted now.",
+          "confirm": "Delete and save"
+        },
+        "saveFailed": "The settings were not saved"
+      },
+      "geoip": {
+        "title": "Country database",
+        "intro": "The countries of clients come from the DB-IP \"IP to Country Lite\" database, which the panel downloads every month and sends to the nodes. It is public data: it holds no address of a client.",
+        "enabled": "Look up countries",
+        "enabledHint": "Off, the panel makes no request to DB-IP and sends the nodes no database; the file it has stays.",
+        "month": "Month",
+        "built": "Built",
+        "size": "Size",
+        "fetched": "Received",
+        "checked": "Last checked",
+        "sha256": "SHA-256",
+        "none": "The panel has no country database yet.",
+        "error": "The last look failed: {{error}}",
+        "refresh": "Look for a newer database",
+        "upload": "Database file",
+        "uploadHint": "For a panel that cannot reach download.db-ip.com: the .mmdb.gz file as DB-IP publishes it, or unpacked.",
+        "uploadButton": "Upload",
+        "uploaded": "The country database was uploaded.",
+        "uploadFailed": "The upload failed: {{reason}}",
+        "licence": "Licence: {{licence}}"
+      },
+      "storage": {
+        "title": "Storage",
+        "file": "Database size",
+        "free": "Of it, free pages",
+        "table": "Table",
+        "rows": "Rows",
+        "empty": "No table has rows yet."
+      }
+    },
+    "about": {
+      "open": "About Postern",
+      "title": "About Postern",
+      "version": "Panel version",
+      "commit": "Commit",
+      "built": "Built",
+      "licence": "Postern is free software under the GNU Affero General Public License, version 3.",
+      "licenceLink": "AGPL-3.0",
+      "geoip": "Country data",
+      "geoipText": "The countries of clients come from the DB-IP \"IP to Country Lite\" database, under the licence {{licence}}.",
+      "close": "Close"
+    },
+    "nav": {
+      "journal": "Journal"
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "intro": "The node checks itself all the time: the light checks below. A full check runs every check of the node and the panel's own, and takes up to 3 minutes.",
+      "proxyTitle": "Check this proxy",
+      "proxyIntro": "The checks of this proxy's scope: the host, its listener, its engine and the members of its chains.",
+      "light": "Latest light checks",
+      "lightNone": "The node has reported no light checks yet.",
+      "noResults": "No results.",
+      "runFull": "Run full check",
+      "runProxy": "Check this proxy",
+      "startFailed": "The check did not start: {{reason}}",
+      "close": "Close",
+      "targetNode": "node",
+      "since": "since {{when}}",
+      "checked": "checked {{when}}",
+      "details": "Details",
+      "hideDetails": "Hide details",
+      "evidence": "Evidence",
+      "hint": "What to look at",
+      "check": {
+        "webCert": {
+          "label": "WEB certificate",
+          "description": "The certificate that the node serves for the domain: valid for it, with at least 14 days left (a warning under 14, a failure under 3)."
+        },
+        "webDns": {
+          "label": "WEB domain in DNS",
+          "description": "The A records of the domain, looked up over DoH, point at this node's address only, and none at Cloudflare."
+        },
+        "webHttp2": {
+          "label": "WEB over HTTP/2",
+          "description": "The listener of the node serves the stored certificate for the domain and answers GET / with 200 over HTTP/2."
+        },
+        "webDecoy": {
+          "label": "WEB decoy site",
+          "description": "The engine of the WEB proxy has its decoy page (public/index.html), which visitors without the secret see."
+        },
+        "webBasePath": {
+          "label": "WEB base path",
+          "description": "Behind a web server: the base path of the proxy answers without a redirect, which clients do not follow."
+        }
+      },
+      "layer": {
+        "panel": "Panel",
+        "host": "Host",
+        "ingress": "Listener",
+        "engine": "Engine",
+        "egress": "Egress",
+        "web": "WEB",
+        "e2e": "End to end"
+      },
+      "status": {
+        "ok": "OK",
+        "warn": "Warning",
+        "fail": "Failed",
+        "skip": "Skipped"
+      },
+      "reason": {
+        "manual": "By hand",
+        "before_change": "Before a change",
+        "after_change": "After a change"
+      },
+      "run": {
+        "title": "Full check",
+        "state": {
+          "running": "Running",
+          "done": "Done",
+          "partial": "Partial",
+          "skipped": "Skipped",
+          "failed": "Failed"
+        },
+        "counts": "{{ok}} OK, {{warn}} warnings, {{fail}} failed, {{skip}} skipped",
+        "started": "started {{when}}",
+        "running": "The checks are running; the results come in as they finish.",
+        "error": "The run failed: {{error}}",
+        "regressed": "Regressed",
+        "regressedHint": "A check that was OK or a warning before the change fails after it."
+      },
+      "history": {
+        "title": "Run history",
+        "none": "No full checks yet.",
+        "started": "Started",
+        "reason": "Why",
+        "state": "State",
+        "comparedWith": "Compared with",
+        "results": "Results",
+        "open": "Open",
+        "openRun": "Open the run of {{when}}",
+        "openBefore": "Open the run before"
+      },
+      "fix": {
+        "action": "Fix: {{fix}}",
+        "title": "Apply the fix \"{{fix}}\"?",
+        "name": {
+          "recreate_instance": "Recreate the engine",
+          "roll_edge": "Roll the edge",
+          "change_egress": "Change the egress",
+          "refresh_subscription": "Refresh the subscription",
+          "set_dns_mode_doh": "Switch DNS to DoH",
+          "reissue_cert": "Reissue the certificate"
+        },
+        "effect": {
+          "recreate_instance": "Starts a new engine generation of this proxy; the old one drains.",
+          "roll_edge": "Starts a new edge generation beside the running one; the old one drains.",
+          "change_egress": "Moves the proxy to another egress chain: its traffic to Telegram goes out through that chain.",
+          "refresh_subscription": "Fetches the subscription of this member again.",
+          "set_dns_mode_doh": "Sets the DNS mode of the node to DoH: the node's DNS forwarder serves the containers.",
+          "reissue_cert": "Has the certificate of this WEB proxy issued again through ACME."
+        },
+        "afterwards": {
+          "roll_edge": "The edge runs the agent's version afterwards.",
+          "reissue_cert": "The node keeps serving the current certificate until the new one is issued, usually within a few minutes."
+        },
+        "afterRun": "Once the node has applied the change, a full check of its scope runs and is compared with the results from before the fix.",
+        "chain": "Chain",
+        "chainHint": "The egress chain that the proxy moves to.",
+        "confirm": "Apply the fix",
+        "applied": "The fix was applied. The node gets generation {{generation}}; the check after the fix starts once the node has applied it.",
+        "openBefore": "Open the check before the fix",
+        "stale": "This fix is stale: the check no longer offers it. Run the checks again.",
+        "unavailable": "This panel cannot apply this fix yet: {{reason}}",
+        "refused": "The panel did not apply the fix: {{reason}}",
+        "unknown": "This version of the panel does not know this fix.",
+        "unavailableReason": "Not available: {{reason}}"
+      }
+    },
+    "availability": {
+      "title": "Availability",
+      "intro": "Whether clients can reach the proxy: its probes, and the checks of its scope on request.",
+      "last": "Last probe from the panel, {{when}}",
+      "lastNone": "No probe from the panel yet.",
+      "class": {
+        "ok": "Through to Telegram",
+        "l1": "L1 only: the proxy answered, no datacenter answered through it",
+        "failed": "Unreachable or refused"
+      },
+      "uptime": "Uptime",
+      "uptime24h": "Uptime, 24 hours",
+      "uptime7d": "Uptime, 7 days",
+      "latency": "Latency of the probes that got through",
+      "latencyNone": "No probe got through in this range."
+    },
+    "problems": {
+      "title": "Problems",
+      "none": "Nothing is wrong right now.",
+      "journal": "Journal",
+      "panel": "Panel",
+      "count": "Problems: {{count}}",
+      "hide": "Hide",
+      "show": "Show",
+      "hiddenNote": "Hidden until it changes",
+      "hiddenToggle": "Hidden: {{count}}",
+      "severity": {
+        "error": "Error",
+        "warning": "Warning"
+      }
+    },
+    "journal": {
+      "title": "Journal",
+      "intro": "What happened to the nodes and proxies, and what the admins did, newest first. A filter takes effect when it is applied.",
+      "filters": "Filters",
+      "tabs": {
+        "events": "Events",
+        "audit": "Audit log"
+      },
+      "period": {
+        "label": "Period",
+        "all": "All time",
+        "24h": "Last 24 hours",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days"
+      },
+      "node": "Node",
+      "proxy": "Proxy",
+      "any": "Any",
+      "severity": {
+        "label": "Severity",
+        "all": "All",
+        "info": "Info and worse",
+        "warning": "Warnings and errors",
+        "error": "Errors"
+      },
+      "kind": "Kind begins with",
+      "action": "Action begins with",
+      "apply": "Apply",
+      "time": "Time",
+      "kindColumn": "Kind",
+      "message": "Message",
+      "admin": "Admin",
+      "adminGone": "a removed admin",
+      "system": "the panel",
+      "actionColumn": "Action",
+      "targetColumn": "Target",
+      "none": "Nothing in the journal for this filter.",
+      "loadMore": "Load more",
+      "end": "That is all."
+    },
+    "changeCheck": {
+      "checking": "Checking the node before the change (up to 90 s)…",
+      "checkingNodes": "Checking the nodes that use this egress before the change (up to 90 s)…",
+      "eachNode": "The checks before and after the change are in the run history of each node that uses this egress.",
+      "before": "Check before the change",
+      "after": "Check after the change",
+      "afterPending": "The check after the change starts about a minute after the node has applied it.",
+      "beforeMissing": "The panel made no check before the change.",
+      "beforeOn": "Check before the change on {{node}}",
+      "open": "Open: {{what}}"
+    },
+    "stepChecks": {
+      "column": "Diagnostics",
+      "before": "Before",
+      "after": "After",
+      "openBefore": "Open the check before the step",
+      "openAfter": "Open the check after the step",
+      "none": "No check yet",
+      "hint": "A full check of the node before and after the step. It informs and never fails a step."
+    }
+  }
+}

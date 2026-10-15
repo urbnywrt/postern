@@ -1,0 +1,17 @@
+# TypeScript client code for the panel API (proto/postern/panel/v1).
+#
+#   npm run gen        (in web/; it limits the input with --path ../proto/postern/panel)
+#
+# Only the panel API is generated: it is what the browser talks to, and the node
+# and edge contracts are not for the browser. This template is kept apart from
+# the root buf.gen.yaml, which makes the Go code in WSL, because Node is on the
+# Windows side. buf and protoc-gen-es are npm devDependencies, and npm puts
+# node_modules/.bin on PATH for scripts, so `local: protoc-gen-es` resolves.
+# `clean` removes the files of protos that are gone. The output is committed.
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts

@@ -1,0 +1,118 @@
+# golangci-lint v2 (CI pins v2.14; make lint runs the same). The standard
+# linters (errcheck, govet, ineffassign, staticcheck, unused), and:
+#
+#   gosec       the security checks;
+#   nolintlint  a //nolint directive has to name its linter, say why, and
+#               suppress something: one that no longer does is an error.
+#
+# Every gosec finding that is not fixed is excluded below with the reason. When
+# gosec was switched on, each finding outside the tests was looked at, and none
+# was a real fault.
+version: "2"
+
+linters:
+  enable:
+    - gosec
+    - nolintlint
+  settings:
+    gosec:
+      excludes:
+        # G115, an integer conversion that may overflow, reports every
+        # narrowing conversion (88 when gosec was switched on, 32 of them
+        # outside the tests). Each of those 32 is bounded by a check before it
+        # (ports checked to be 1-65535, protocol fields capped at 253 or 255
+        # bytes, byte counts that are never negative, sequence numbers of
+        # SQLite) or cuts on purpose (the 32-bit time in a fake-TLS hello).
+        - G115
+        # G304, a file opened by a path in a variable, reports every file that
+        # is opened by a path that is not a constant. The paths are made of
+        # the configured directories (POSTERN_DATA, POSTERN_KEYS, POSTERN_HOME,
+        # the node kit's) and of names that the code checks (ULIDs, sha256
+        # digests, the architectures of the kit). G703 stays on: it follows
+        # what comes in with a request into a path, which is the case that
+        # matters.
+        - G304
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    rules:
+      # Tests are not shipped. They make up credentials (G101), write files
+      # and directories of a temporary tree with any mode (G301, G302, G306),
+      # use math/rand for test data (G404), run subprocesses (G204), start
+      # servers without timeouts (G112) and TLS clients that skip
+      # verification (G402), on purpose. The end-to-end test is test code
+      # too, built with its tag only, and so is sshxtest, the SSH server that
+      # the tests of the panel run in their own process: only _test.go files
+      # import it, and it writes an executable fake sudo into the temporary
+      # tree of a test (G306) and runs the commands that a test sends with sh
+      # (G204).
+      - path: _test\.go$
+        linters: [gosec]
+      - path: ^test/e2e/
+        linters: [gosec]
+      - path: ^internal/panel/sshx/sshxtest/
+        linters: [gosec]
+      # The SSH credentials of a node are marshaled to JSON only to be sealed
+      # with the master key at once (seal.Seal, with the id of the node as
+      # additional data), and the plain JSON is cleared: it is never stored,
+      # sent or logged.
+      - path: ^internal/panel/deploy/credentials\.go$
+        text: "G117:"
+        linters: [gosec]
+      # SQL made of constants only: column lists, placeholders(n), fixed
+      # WHERE clauses and the table suffix of resolution() (1m, 1h or 1d).
+      # Every value is a ? parameter.
+      - path: ^internal/panel/store/
+        text: "G202:"
+        linters: [gosec]
+      # The session cookie is HttpOnly and SameSite=Strict, and Secure when
+      # the client is on TLS: the panel serves plain HTTP as well (behind a
+      # TLS proxy, or through an SSH tunnel), where a Secure cookie would
+      # never be sent back. See deploy/panel/README.md.
+      - path: ^internal/panel/auth/session\.go$
+        text: "G124:"
+        linters: [gosec]
+      # Engine binaries and their directories are 0755: the engine
+      # containers run as user 65534 and execute them.
+      - path: ^internal/artifacts/store\.go$
+        text: "G30[12]:"
+        linters: [gosec]
+      # The engine releases that the panel keeps for its nodes are public
+      # files; the directory is 0755 like the store of the node.
+      - path: ^internal/panel/proxies/catalog\.go$
+        text: "G301:"
+        linters: [gosec]
+      # cipher.NewGCMWithRandomNonce makes a random nonce for every Seal and
+      # wants nil for it; nothing is hard-coded.
+      - path: ^internal/seal/seal\.go$
+        text: "G407:"
+        linters: [gosec]
+      # TOTP (RFC 6238) is HMAC-SHA1 in every authenticator app; SHA-1 is used
+      # as an HMAC, where its collisions do not matter.
+      - path: ^internal/totp/totp\.go$
+        text: "G505:"
+        linters: [gosec]
+      # The architecture in the path of a kit file comes from the request,
+      # and openKit takes it only when it is one of kitArches.
+      - path: ^internal/panel/nodes/kit\.go$
+        text: "G703:"
+        linters: [gosec]
+      # The bundle is sent as application/x-tar, as an attachment, with
+      # X-Content-Type-Options: nosniff: no browser renders it.
+      - path: ^internal/panel/nodes/bundle_handler\.go$
+        text: "G705:"
+        linters: [gosec]
+      # The delay of the drop action only has to vary, not to be secret (the
+      # generator of math/rand/v2 is ChaCha8, seeded by the runtime).
+      - path: ^internal/edge/edge\.go$
+        text: "G404:"
+        linters: [gosec]
+      # scripts/release is the tool of whoever makes a release, run by hand and
+      # by scripts/release.sh: the files and directories that it reads and
+      # writes, and the revisions that it gives git, are those of its own
+      # command line (G703, G204), and it refuses revisions that look like
+      # options. Its tests are excluded above with every test.
+      - path: ^scripts/release/main\.go$
+        text: "G(204|703):"
+        linters: [gosec]

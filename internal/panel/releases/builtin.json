@@ -1,0 +1,38 @@
+{
+  "telemt": [
+    {
+      "version": "3.5.13",
+      "assets": {
+        "amd64": {"file": "telemt-x86_64-linux-musl.tar.gz", "sha256": "7124a854310d4c91a502aeebfd29f7fc6ddef1dcd44eb0cb72e9f9c176582b43"},
+        "arm64": {"file": "telemt-aarch64-linux-musl.tar.gz", "sha256": "f7b5181f1160e9ec73eb28705040bf159782055ec71f54a20214e2c9a6d997cd"}
+      }
+    }
+  ],
+  "mtg": [
+    {
+      "version": "v2.2.8",
+      "assets": {
+        "amd64": {"file": "mtg-2.2.8-linux-amd64.tar.gz", "sha256": "7ef19d079d85f4e00d4f8334ec1f3f3c8718e3d0ed1f3109ea9a8673138a2102"},
+        "arm64": {"file": "mtg-2.2.8-linux-arm64.tar.gz", "sha256": "562a94dd4cafcb8f179b76cfeafb76da12747c8e230bc76235bf8746cc189644"}
+      }
+    }
+  ],
+  "xray": [
+    {
+      "version": "v26.3.27",
+      "assets": {
+        "amd64": {"file": "Xray-linux-64.zip", "sha256": "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"},
+        "arm64": {"file": "Xray-linux-arm64-v8a.zip", "sha256": "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"}
+      }
+    }
+  ],
+  "psiphon-core": [
+    {
+      "version": "20261005-c4a09096ab",
+      "assets": {
+        "amd64": {"file": "psiphon-core-linux-amd64", "sha256": "c1767915e1773bd812b64238377de262b135d9aafe097b24e09190ff6e4b0b33"},
+        "arm64": {"file": "psiphon-core-linux-arm64", "sha256": "eadefe0c157bd6645420e5d63b124e50de223a76206eda788165505555f6b1f8"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+name: Stable engines
+
+# The stable list of the engines and providers (docs/releasing.md): once a week,
+# and when it is started by hand, the newest upstream release of each component
+# that is newer than its newest stable version and passes the checksum rules and
+# the static-ELF check goes through the end-to-end tests that run it; those that
+# pass are added to engines-stable.json, which is signed with the stable key and
+# put on the release engines-stable. Three jobs, each with only what it needs:
+#
+#   candidates   scripts/stable.sh candidates: the list that is out, the
+#                candidates, and their SHA-256 as the artifact stable-candidates.
+#                No secret.
+#   e2e          one job per candidate: scripts/stable.sh e2e, the end-to-end
+#                tests with the candidate's version (POSTERN_E2E_<C>_VERSION);
+#                a pass is the artifact stable-passed-<component>. No secret:
+#                the candidate's binaries run here, and only here. A failure is
+#                in the job summary, and the candidate is not added.
+#   stable-sign  in the environment "stable", which alone holds the stable key
+#                (POSTERN_STABLE_KEY and its password): scripts/stable.sh sign
+#                (stable-add, then stable-sign) and publish. No candidate code
+#                runs here: it takes the SHA-256 of the candidates job and the
+#                names of the passes, nothing that the tests made. Without the
+#                key (a fork) it signs nothing and says so.
+#
+# Only where the end-to-end tests run (Ruling 29): on GitHub in urbnywrt/postern
+# (not on a fork), or where the repository variable POSTERN_E2E is 1, a Gitea or
+# a fork that opts in (docs/testing/e2e.md). A version is
+# dropped from the list only by hand: a manual run with "drop".
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      drop:
+        description: "Versions to drop from the list: <component>@<version>, apart by spaces"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-engines
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  candidates:
+    name: Candidates
+    # Not on forks: GitHub runs it for the main repository only, and anywhere
+    # else (Gitea, or a fork that opts in) the variable POSTERN_E2E turns it on.
+    if: (github.server_url == 'https://github.com' && github.repository == 'urbnywrt/postern') || vars.POSTERN_E2E == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.candidates.outputs.matrix }}
+      any: ${{ steps.candidates.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: Candidates
+        id: candidates
+        env:
+          # The API of the upstream releases, with the token of the job for its
+          # rate limit (a token without rights on other repositories).
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/stable.sh candidates "$RUNNER_TEMP/stable"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stable-candidates
+          path: ${{ runner.temp }}/stable/candidates.json
+          retention-days: 7
+
+  e2e:
+    name: End-to-end ${{ matrix.candidate.component }} ${{ matrix.candidate.version }}
+    needs: candidates
+    if: needs.candidates.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # one run of the end-to-end tests at a time per Docker host
+      matrix:
+        candidate: ${{ fromJSON(needs.candidates.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.x
+      - name: End-to-end tests on the candidate
+        env:
+          COMPONENT: ${{ matrix.candidate.component }}
+          VERSION: ${{ matrix.candidate.version }}
+        run: |
+          bash scripts/stable.sh e2e "$COMPONENT" "$VERSION"
+          mkdir -p "$RUNNER_TEMP/passed"
+          echo "$COMPONENT@$VERSION" > "$RUNNER_TEMP/passed/$COMPONENT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stable-passed-${{ matrix.candidate.component }}
+          path: ${{ runner.temp }}/passed/${{ matrix.candidate.component }}
+          retention-days: 7
+
+  stable-sign:
+    name: Sign the stable list
+    needs: [candidates, e2e]
+    # Also when an e2e job failed (its candidate is left out) and when there was
+    # no candidate but a manual run drops a version.
+    if: >-
+      always() && needs.candidates.result == 'success' &&
+      (needs.candidates.outputs.any == 'true' || github.event.inputs.drop != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: stable
+    permissions:
+      contents: write # the release engines-stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 1.27.x
+          # No cache: one saved by a job that ran npm could hold a trojaned
+          # package that the build of the signing tool would link (S5-12).
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: ${{ runner.temp }}/artifacts
+      - name: Sign
+        env:
+          POSTERN_STABLE_KEY: ${{ secrets.POSTERN_STABLE_KEY }}
+          POSTERN_STABLE_KEY_PASSWORD: ${{ secrets.POSTERN_STABLE_KEY_PASSWORD }}
+          POSTERN_STABLE_DROP: ${{ github.event.inputs.drop }}
+        run: |
+          dir=$RUNNER_TEMP/stable
+          mkdir -p "$dir"
+          cp "$RUNNER_TEMP/artifacts/stable-candidates/candidates.json" "$dir/"
+          passed=()
+          for f in "$RUNNER_TEMP"/artifacts/stable-passed-*/*; do
+            [ -f "$f" ] && passed+=("$(cat "$f")")
+          done
+          bash scripts/stable.sh sign "$dir" "${passed[@]}"
+      - name: Publish on GitHub
+        if: github.server_url == 'https://github.com'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -f "$RUNNER_TEMP/stable/engines-stable.json.minisig" ]; then
+            bash scripts/stable.sh publish "$RUNNER_TEMP/stable"
+          fi
+      - name: Publish on Gitea
+        if: github.server_url != 'https://github.com'
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          if [ -f "$RUNNER_TEMP/stable/engines-stable.json.minisig" ]; then
+            bash scripts/stable.sh publish "$RUNNER_TEMP/stable"
+          fi

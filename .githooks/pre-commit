@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# pre-commit: keep private strings and secrets out of history.
+#
+#   1. scripts/check-denylist.sh --staged  private deny-list, kept outside the repository
+#   2. gitleaks protect --staged --redact  local binary, else the pinned Docker image
+#
+# Git runs hooks from the top of the working tree, so $PWD is the repository root.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+# Run the pinned gitleaks image over the staged changes.
+#
+# The plain command is enough when the git dir is <repo>/.git and the index is
+# the default one. A linked worktree keeps its git dir elsewhere, and
+# `git commit -a` or `-o` stages into a separate index file. The container sees
+# neither, and gitleaks would quietly scan nothing. In those cases mount the
+# shared git dir and tell git where the git dir and the index are.
+gitleaks_in_docker() {
+  local -a flags=(--rm -v "$PWD:/repo" -w /repo)
+  local git_dir common_dir index_file
+  if [ ! -d .git ] || [ "${GIT_INDEX_FILE:-.git/index}" != .git/index ]; then
+    git_dir=$(git rev-parse --path-format=absolute --git-dir)
+    common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+    index_file=$(git rev-parse --path-format=absolute --git-path index)
+    flags+=(-v "$common_dir:/gitcommon" -e GIT_WORK_TREE=/repo
+      -e "GIT_DIR=/gitcommon${git_dir#"$common_dir"}"
+      -e "GIT_INDEX_FILE=/gitcommon${index_file#"$common_dir"}")
+  fi
+  # MSYS_NO_PATHCONV stops Git Bash from rewriting "/repo" into a Windows path.
+  MSYS_NO_PATHCONV=1 docker run "${flags[@]}" zricethezav/gitleaks:v8.28.0 protect --staged --redact
+}
+
+"$root/scripts/check-denylist.sh" --staged
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  gitleaks_in_docker
+else
+  echo "pre-commit: WARNING: neither gitleaks nor a working docker found; secrets were NOT scanned" >&2
+fi

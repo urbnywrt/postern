@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// PublicPageService configures the public page: a page on a domain of its own
+// that lists the proxies an admin chose, with their links, so that the owner
+// can hand out one address instead of links one by one. The panel serves it for
+// exactly one Host, and the admin UI and API are never served on that host. The
+// page is off until an admin sets its host and enables it.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INVALID_ARGUMENT: a value is not acceptable: the host is not a DNS name
+//     of at least two labels, is an IP address or carries a port; the host is
+//     one the admin pages are served on (the host of this request, or one an
+//     admin request used before); the page is enabled without a host; a text
+//     is too long; the title has more than one line break; a code is longer
+//     than 4 or has other than letters and digits; more than 100 items; an
+//     item names a proxy twice; or unavailable or default_locale is not one
+//     of its values.
+//   - NOT_FOUND: an item names a proxy that does not exist.
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+service PublicPageService {
+  // GetPublicPage returns the configuration of the page, items included.
+  rpc GetPublicPage(GetPublicPageRequest) returns (GetPublicPageResponse);
+
+  // UpdatePublicPage replaces the whole configuration, items included, and is
+  // audited as public_page.update. The page serves the new configuration at
+  // once.
+  rpc UpdatePublicPage(UpdatePublicPageRequest) returns (UpdatePublicPageResponse);
+
+  // CheckPublicPage reaches the configured host the way a visitor does: it
+  // resolves the name, over DNS-over-HTTPS or else the system resolver, and
+  // asks https://<host>/robots.txt, without following a redirect to another
+  // host. It says whether the name points somewhere, whether HTTPS works with
+  // a valid certificate, and whether the answer came from this panel.
+  // FAILED_PRECONDITION: no host is configured.
+  rpc CheckPublicPage(CheckPublicPageRequest) returns (CheckPublicPageResponse);
+}
+
+// PublicPage is the configuration of the public page.
+message PublicPage {
+  // enabled is whether the page is served. While it is false the host, if one
+  // is set, still never serves the admin: every request there is a 404.
+  bool enabled = 1;
+  // host is the DNS name the page is served for, in lower case, without a
+  // port: "proxies.example.com". It has at least one dot, is not an IP
+  // address, and is none of the names the admin pages are served on. Empty
+  // means no host, and the page cannot be enabled.
+  string host = 2;
+  // title is the title of the page, plain text, at most 120 bytes. It is the
+  // only h1 of the page. It has one line, or two separated by one line break:
+  // the second line is shown in the accent colour, and the <title> of the page
+  // is the two joined with a space.
+  string title = 3;
+  // body_md is the text under the title, Markdown without raw HTML, at most
+  // 16 KiB. Headings are shifted one level down, images show as their alt
+  // text, and links to javascript:, data:, vbscript: and file: are dropped.
+  string body_md = 4;
+  // unavailable says what the page does with an item whose proxy is paused,
+  // whose node is offline or whose probes fail: "hide" leaves it out, "mark"
+  // (the default) shows its name, its note and "unavailable", and no link or
+  // parameter.
+  string unavailable = 5;
+  // default_locale is the language of the labels when neither ?lang= nor
+  // Accept-Language says: "ru" (the default) or "en".
+  string default_locale = 7;
+  // items are the proxies the page lists, in this order; at most 100.
+  repeated PublicPageItem items = 8;
+  // allow_indexing lets search engines index the page. While it is false,
+  // which it is when the field is absent, every response carries
+  // X-Robots-Tag: noindex, nofollow, noarchive and robots.txt disallows
+  // everything; a client that leaves the field out can never turn that off.
+  bool allow_indexing = 9;
+  // footer is the text under the items, plain text, at most 300 bytes; line
+  // breaks are kept. Empty shows the default text of the locale.
+  string footer = 10;
+
+  // 6 was noindex, a bool whose absence turned the protection off.
+  reserved 6;
+  reserved "noindex";
+}
+
+// PublicPageItem is one proxy on the page.
+message PublicPageItem {
+  // proxy_id is the proxy; each proxy is listed at most once.
+  string proxy_id = 1;
+  // public_name is the name shown on the page, at most 64 characters; the
+  // name the admin sees is never shown.
+  string public_name = 2;
+  // public_note is a note shown under the name, at most 280 characters.
+  string public_note = 3;
+  // code is the short code shown at the start of the row: 0 to 4 ASCII
+  // letters and digits, stored in upper case. Empty shows the country of the
+  // server by the panel's GeoIP database (see country).
+  string code = 4;
+  // country is what the page shows while code is empty: the country of the
+  // server by the panel's GeoIP database, "" when it is not known. It is set
+  // in the answers and ignored in an update.
+  string country = 5;
+}
+
+message GetPublicPageRequest {}
+
+message GetPublicPageResponse {
+  PublicPage page = 1;
+}
+
+message UpdatePublicPageRequest {
+  // page is the whole configuration; what it leaves out is cleared.
+  PublicPage page = 1;
+}
+
+message UpdatePublicPageResponse {
+  PublicPage page = 1;
+}
+
+message CheckPublicPageRequest {}
+
+// CheckPublicPageResponse is what the panel found when it reached the host of
+// the page the way a visitor does.
+message CheckPublicPageResponse {
+  // host is the host that was checked, the configured one.
+  string host = 1;
+  // addresses are the A and AAAA records of the host, IPv4 first, as strings.
+  // Empty when the name has none.
+  repeated string addresses = 2;
+  // dns_error says why the name was not resolved: empty when it was, "not
+  // found" when the name or its addresses do not exist, else the error.
+  string dns_error = 3;
+  // https_ok is whether https://<host>/robots.txt answered 200 with a
+  // certificate valid for the host under the system roots, within 10 s.
+  bool https_ok = 4;
+  // https_error says why not: the error of the connection or of the
+  // certificate, or the status that came instead of 200. Empty when https_ok.
+  string https_error = 5;
+  // cert_issuer is the issuer of the certificate the host presented, its
+  // common name or else the whole name; empty when there was none.
+  string cert_issuer = 6;
+  // cert_not_after_unix is when that certificate expires, Unix seconds; 0
+  // when there was none.
+  int64 cert_not_after_unix = 7;
+  // served_by_panel is whether the answer came from this panel's public page:
+  // it carries the header X-Postern-Page: 1, which the page sets on every
+  // response.
+  bool served_by_panel = 8;
+}

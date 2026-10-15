@@ -1,0 +1,762 @@
+syntax = "proto3";
+
+package postern.node.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/node/v1;nodev1";
+
+// NodeService is served by the node agent over mTLS and called by the panel.
+service NodeService {
+  // GetInfo returns versions, platform, public IPs, the applied and desired
+  // generations, the stored artifacts and the owners of occupied ports.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  // ApplyState hands the node its whole desired state. A state that fails
+  // validation is rejected with a reason.
+  rpc ApplyState(ApplyStateRequest) returns (ApplyStateResponse);
+  // Watch replays the buffered records after the cursor, then streams live
+  // state reports, statistics batches and events.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  // UploadArtifact receives an engine binary in chunks; the node verifies its
+  // checksum.
+  rpc UploadArtifact(stream UploadArtifactRequest) returns (UploadArtifactResponse);
+  // StreamLogs streams the tail of a node container's log, optionally
+  // following it.
+  rpc StreamLogs(StreamLogsRequest) returns (stream StreamLogsResponse);
+  // UpdateSelf receives a signed postern-node binary in chunks (capability
+  // "update-self"): the first message is its meta, the rest the file. The
+  // node verifies it (size, SHA-256, the minisign signature by a release key
+  // and its trusted comment, a static ELF, "<file> version"), installs it as
+  // bin/postern-node-<version> and points bin/current at it, bin/previous at
+  // what ran before. When that changed bin/current the answer says
+  // restarting, and the agent exits with code 75 so that its launcher starts
+  // the new binary.
+  rpc UpdateSelf(stream UpdateSelfRequest) returns (UpdateSelfResponse);
+  // UpdateEdge rolls the edge to an installed agent binary (capability
+  // "update-edge"): bin/postern-node-<version>, a regular executable file
+  // that is verified as strictly as UpdateSelf verifies one: the minisign
+  // signature by a release key that UpdateSelf kept beside it (or the file is
+  // the running agent's own binary), a static ELF for the node, and
+  // "<version> (" from its "version". A version older than the running edge's
+  // goes in only with rollback set, and only to the edge's recorded previous
+  // version. The file is hashed again right before the edge mounts it. A new
+  // edge generation starts beside the running one on it
+  // (Ruling 44), takes over only when it binds every listener the running one
+  // binds, and the running one drains. The answer, within 120 s, is the new
+  // generation once it answers Health with that version; a roll that fails
+  // leaves the old generation serving and is Aborted with the reason (event
+  // edge_roll_failed). An edge that runs that version already is not rolled.
+  // A second call while one runs is Unavailable.
+  rpc UpdateEdge(UpdateEdgeRequest) returns (UpdateEdgeResponse);
+  // PutCertificate stores the certificate of a WEB domain on the node, for a
+  // proxy whose cert_mode is "imported" (Ruling S3-1): the chain and the key
+  // go to data/certs/<domain>/ (the key 0600), never into the desired state.
+  // It is idempotent by content: a certificate that is already stored is not
+  // written again. The node serves the route of the proxy once the stored
+  // chain's SHA-256 is the proxy's WebSettings.cert_sha256.
+  rpc PutCertificate(PutCertificateRequest) returns (PutCertificateResponse);
+  // RunDiagnostics runs every check of a scope and streams the results
+  // (spec 5.7). Unimplemented until the node reports the capability
+  // "diagnostics". The stream is of the results themselves, the record the
+  // panel stores and DiagnosticsReport carries too, not of a wrapper.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc RunDiagnostics(RunDiagnosticsRequest) returns (stream DiagnosticResult);
+  // UploadGeoIP receives a country database (DB-IP MMDB) in chunks: meta
+  // first, then the chunks; the node verifies the sha256. Unimplemented until
+  // the node reports the capability "stats-v2".
+  rpc UploadGeoIP(stream UploadGeoIPRequest) returns (UploadGeoIPResponse);
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  string agent_version = 1;
+  // edge_version is the version of the edge that carries the traffic, as the
+  // edge itself reports it (the Health of its control service). It differs
+  // from agent_version after an update of the node until the edge is rolled:
+  // the panel shows such an edge as outdated. Empty when it is not known:
+  // there is no edge yet, it does not answer, or it is older than the version
+  // it reports.
+  string edge_version = 2;
+  string arch = 3;
+  string os = 4;
+  repeated string public_ips = 5;
+  uint64 applied_generation = 6;
+  uint64 desired_generation = 7;
+  repeated ArtifactRef artifacts = 8;
+  repeated PortOwner port_owners = 9;
+  // capabilities name what this build of the node can do, so that the panel
+  // can tell which changes a node can take (Ruling 43: the panel stores them;
+  // from slice 2 on it refuses a change that a node cannot take). A node that
+  // does not report the field, one older than it, has the slice-1 baseline:
+  // fake-TLS proxies on telemt, and none of the rest of this list. The
+  // capabilities, sorted:
+  //   "artifact-direct" NodeSettings.artifact_source "direct": the node
+  //                     downloads the artifacts of the state from their url;
+  //   "artifact-trial"  UploadArtifact tries the binary out in the runner
+  //                     image and answers tried, usable and reason; the
+  //                     artifacts here carry state and state_reason;
+  //   "dns-forwarder"   NodeSettings.dns_mode: the edge's DNS forwarder,
+  //                     backed by DNS-over-HTTPS, for the containers of the
+  //                     node;
+  //   "edge-roll"       the operator rolls the edge with data/run/roll-edge
+  //                     (install.sh --roll-edge);
+  //   "edge-roll-nonce" NodeSettings.edge_roll_nonce: a new value rolls the
+  //                     edge like the operator's roll does;
+  //   "edge-version"    edge_version is the version the running edge
+  //                     reports, not the agent's;
+  //   "egress-interface" egresses of kind DIRECT through an interface of the
+  //                     node (params_json "interface"); one from an address
+  //                     of the node only is in the baseline;
+  //   "egress-psiphon-core" egresses of kind PSIPHON on Psiphon's own client
+  //                     (psiphon-tunnel-core; "egress-psiphon" was warp-plus,
+  //                     which the panel no longer counts);
+  //   "egress-warp"     egresses of kind WARP (Xray's WireGuard outbound with
+  //                     a WARP device the node registers);
+  //   "egress-xray"     egresses of kind XRAY_URI and XRAY_SUBSCRIPTION;
+  //   "engine-mtg"      fake-TLS proxies on mtg (Proxy.engine ENGINE_MTG): a
+  //                     proxy switches between telemt and mtg by the same
+  //                     blue-green as a version change, with its link kept;
+  //   "faketls"         fake-TLS proxies on telemt;
+  //   "last-error"      StateReport.last_error says why the last pass failed;
+  //   "me-routing"      the middle-proxy connections of an engine take its
+  //                     scope chain "me" (the edge tells them by their
+  //                     address and port), and the NAT address of the middle
+  //                     proxy is the exit address of that chain;
+  //   "probe-sources"   the running edge exempts the panel's probes
+  //                     (NodeSettings.probe_sources, R6-1); reported only
+  //                     while the running edge is of the agent's version;
+  //   "restart-nonce"  Proxy.restart_nonce: a new value rolls the engine
+  //                     instance of the proxy by blue-green;
+  //   "rollout-status"  ProxyStatus.engine is the serving instance's,
+  //                     failed_engine and failed_version name the desired
+  //                     instance whose attempt was aborted, and
+  //                     StateReport.egress_instances reports the provider
+  //                     instances; what a rollout (slice 5) judges by;
+  //   "update-edge"     UpdateEdge rolls the edge to an installed binary;
+  //   "update-self"     UpdateSelf installs a signed agent binary and
+  //                     restarts; binaries, healthy and warnings are set.
+  repeated string capabilities = 10;
+  // binaries are the agent binaries installed in bin/.
+  NodeBinaries binaries = 11;
+  // healthy says that this process wrote the launcher's healthy marker: its
+  // server is serving, the desired state is loaded and a reconcile pass ran.
+  // A node update is done when the node answers healthy with agent_version
+  // the target.
+  bool healthy = 12;
+  // warnings are codes of what is unusual about this build:
+  // "test-release-keys" (it trusts test keys), "test-release-keys-ignored"
+  // (it was built with test keys that its production keys override),
+  // "edge-handoff-unsafe" (net.ipv4.tcp_migrate_req is not 1, so an edge roll
+  // aborts the connections still in the accept queue of the old generation:
+  // re-run install.sh, on Linux 5.14 or later).
+  repeated string warnings = 13;
+  // peer_addr is the address the call came from, as the node sees it: the IP
+  // alone, without port, an IPv4-mapped address unmapped; "" when it is not a
+  // unicast address. On the plain management listener it is the TCP source;
+  // on the hidden one of spec 5.3 the source of the PROXY v2 header. The
+  // panel learns its own addresses from it (R6-1).
+  string peer_addr = 14;
+  // geoip_stored is the sha256 (lower-case hex) of every country database
+  // the node holds (data/geoip/<sha256>.mmdb).
+  repeated string geoip_stored = 15;
+}
+
+// NodeBinaries are the agent binaries of a node: the versions installed as
+// bin/postern-node-<version>, sorted, and those bin/current and bin/previous
+// point to ("" when the link is missing).
+message NodeBinaries {
+  repeated string versions = 1;
+  string current = 2;
+  string previous = 3;
+  // signed_versions are the versions whose signature is kept beside the
+  // binary, bin/.postern-node-<version>.minisig (UpdateSelf and install.sh
+  // keep it), sorted as versions. UpdateEdge rolls the edge only to one of
+  // them, or to the running agent's own binary, so the panel plans an
+  // edge-only roll to no other version. A node older than the field reports
+  // none.
+  repeated string signed_versions = 4;
+}
+
+message PortOwner {
+  string bind = 1;
+  uint32 port = 2;
+  string owner = 3;
+}
+
+// NodeState is the desired state of a node. It is sent whole with every
+// ApplyState call.
+message NodeState {
+  uint64 generation = 1;
+  NodeSettings settings = 2;
+  repeated Listener listeners = 3;
+  repeated Proxy proxies = 4;
+  repeated Egress egresses = 5;
+  repeated EgressChain chains = 6;
+  repeated ArtifactRef artifacts = 7;
+}
+
+message NodeSettings {
+  string default_chain_id = 1;
+  repeated string domain_pool = 2;
+  repeated string blacklist_cidrs = 3;
+  IpPolicy ip_policy = 4;
+  string mgmt_sni = 5;
+  // dns_mode is how the containers of the node resolve names: "doh" (the
+  // default, also when empty) through the edge's DNS forwarder, which asks
+  // DNS-over-HTTPS endpoints, or "system" with the nameservers of the host.
+  string dns_mode = 6;
+  reserved 7;
+  reserved "standby";
+  // ip_retention_hours is how long client addresses stay in the node's
+  // buffer, 1-720; 0 means 168.
+  uint32 ip_retention_hours = 8;
+  // geoip names the country database the node looks client addresses up in;
+  // only with ip_policy full or countries. The panel uploads it with
+  // UploadGeoIP when geoip_stored of GetInfo does not have its sha256.
+  GeoIPRef geoip = 9;
+  // probe_sources are the exact IP addresses (no prefixes, at most 32) whose
+  // connections to a public listener are the panel's probes (R6-1).
+  repeated string probe_sources = 10;
+  // edge_roll_nonce rolls the edge: a value other than the one the node last
+  // took makes a new edge generation beside the running one, which then
+  // drains, with the agent's own binary (Ruling 44 path). The node records
+  // the value when the roll starts, whatever its outcome.
+  uint64 edge_roll_nonce = 11;
+  // mgmt_hidden_only closes the plain management listener, so that the agent
+  // is reached only through the hidden listener of spec 5.3 (the edge forwards
+  // mgmt_sni to it with PROXY v2). It is set by the panel after a switch to
+  // hidden mode has gone through a GetInfo over the public port. As a fallback,
+  // when no request authenticated by the panel's client certificate arrives
+  // through the hidden listener for 15 minutes while the plain one is off, the
+  // agent reopens the plain listener (event mgmt.fallback) and closes it again
+  // after the next authenticated request through the hidden one. Without
+  // mgmt_sni it has no effect: the plain listener stays open.
+  bool mgmt_hidden_only = 12;
+  // artifact_source is where the node gets the artifacts of the state:
+  // "panel" (the default, also when empty), uploaded by the panel
+  // (UploadArtifact), or "direct" (capability "artifact-direct"): an
+  // artifact the node does not have is downloaded by the node itself from
+  // ArtifactRef.url (https only, at most 200 MiB, two at a time), verified
+  // against the pinned sha256 and tried out as an upload is. A download that
+  // fails is reported (event artifact_download_failed), the artifact stays
+  // missing, and its url is not tried again for 10 minutes; the panel uploads
+  // what the node still lacks at its next resync.
+  string artifact_source = 13;
+}
+
+// GeoIPRef names a country database: the month of the DB-IP release
+// (YYYY-MM) and the sha256 of the MMDB file, 64 hex digits.
+message GeoIPRef {
+  string month = 1;
+  string sha256 = 2;
+}
+
+enum IpPolicy {
+  IP_POLICY_UNSPECIFIED = 0;
+  IP_POLICY_FULL = 1;
+  IP_POLICY_COUNTRIES = 2;
+  IP_POLICY_OFF = 3;
+}
+
+message Listener {
+  string id = 1;
+  ListenerKind kind = 2;
+  string bind_ip = 3;
+  uint32 port = 4;
+  StrangerAction stranger_action = 5;
+  string mask_target = 6;
+  NonTlsAction non_tls_action = 7;
+  repeated string trusted_cidrs = 8;
+}
+
+enum ListenerKind {
+  LISTENER_KIND_UNSPECIFIED = 0;
+  LISTENER_KIND_TLS = 1;
+  LISTENER_KIND_HTTP_UPSTREAM = 2;
+}
+
+enum StrangerAction {
+  STRANGER_ACTION_UNSPECIFIED = 0;
+  STRANGER_ACTION_MASK = 1;
+  STRANGER_ACTION_REJECT = 2;
+  STRANGER_ACTION_DROP = 3;
+}
+
+enum NonTlsAction {
+  NON_TLS_ACTION_UNSPECIFIED = 0;
+  NON_TLS_ACTION_DROP = 1;
+  NON_TLS_ACTION_HTTP400 = 2;
+}
+
+message Proxy {
+  string id = 1;
+  string listener_id = 2;
+  ProxyType type = 3;
+  bool enabled = 4;
+  // secret is the proxy secret. Never log it and never return it from GetInfo
+  // or Watch.
+  string secret = 5;
+  string domain = 6;
+  Engine engine = 7;
+  string engine_version = 8;
+  string egress_chain_id = 9;
+  map<string, string> egress_scope_chains = 10;
+  Limits limits = 11;
+  string ad_tag = 12;
+  string mask_target_override = 13;
+  string nat_ip = 14;
+  bool use_middle_proxy = 15;
+  string engine_overrides_json = 16;
+  WebSettings web = 17;
+  // restart_nonce rolls the engine instance of the proxy: a value other than
+  // the one the serving instance was made with makes a new generation by
+  // blue-green with the gate. 0 adds nothing to the instance hash.
+  uint64 restart_nonce = 18;
+}
+
+enum ProxyType {
+  PROXY_TYPE_UNSPECIFIED = 0;
+  PROXY_TYPE_FAKETLS = 1;
+  PROXY_TYPE_WEB = 2;
+}
+
+enum Engine {
+  ENGINE_UNSPECIFIED = 0;
+  ENGINE_TELEMT = 1;
+  ENGINE_MTG = 2;
+}
+
+message Limits {
+  uint32 devices = 1;
+  uint32 conns_total = 2;
+  uint32 conns_per_ip = 3;
+}
+
+// WebSettings are the settings of a WEB proxy (type PROXY_TYPE_WEB).
+message WebSettings {
+  // base_path places the proxy under a path of its domain ("tg" or "a/b":
+  // segments of [A-Za-z0-9][A-Za-z0-9_-]*, each up to 128 bytes, no slash at
+  // either end). Required on an http-upstream listener; empty on a tls
+  // listener puts it at the root of the domain.
+  string base_path = 1;
+  // secret_mode is "plain" (the default when empty) or "dd".
+  string secret_mode = 2;
+  // carrier is the carrier of clients that do not negotiate one, "https"
+  // when empty; carriers are the ones offered to clients that do,
+  // ["https-lanes"] when empty. Each is "https" or "https-lanes".
+  string carrier = 3;
+  repeated string carriers = 4;
+  // cert_mode is "acme-dns01" or "imported" on a tls listener (the edge
+  // terminates TLS there); it is ignored on an http-upstream listener, where
+  // the web server in front owns the certificate.
+  string cert_mode = 5;
+  // acme_email is the contact of the ACME account; may be empty.
+  string acme_email = 6;
+  // dns_credential is the DNS provider token of cert_mode acme-dns01 (for
+  // Cloudflare, an API token with Zone:DNS:Edit on the zone of the domain).
+  // Never log it.
+  string dns_credential = 7;
+  // public_addr is the public IPv4 address the A record of the domain points
+  // to, as the panel checked it; the node resolves the domain itself and uses
+  // the address when it is among the A records and the node's own. Empty
+  // leaves the choice to the node.
+  string public_addr = 8;
+  // cert_sha256 is, for cert_mode imported, the lowercase hex SHA-256 of the
+  // fullchain.pem the panel put on the node (PutCertificate); the route is
+  // served only while the stored chain matches it.
+  string cert_sha256 = 9;
+  // reissue_nonce, for cert_mode acme-dns01 on a tls listener only, asks for
+  // a new certificate whenever it differs from the nonce recorded with the
+  // certificate on disk (meta.json), even when that one is valid: the fix
+  // reissue_cert raises it by one (slice 6, capability web-diagnostics). 0 is
+  // the nonce of a certificate that records none, so a node never reissues on
+  // a restart. Refused with any other cert_mode and on an http-upstream
+  // listener.
+  uint64 reissue_nonce = 10;
+}
+
+message PutCertificateRequest {
+  // domain is the WEB domain in lowercase ASCII (punycode for IDNs).
+  string domain = 1;
+  // fullchain_pem is the certificate chain, leaf first, PEM. key_pem is its
+  // private key, PEM; never log it.
+  bytes fullchain_pem = 2;
+  bytes key_pem = 3;
+}
+
+message PutCertificateResponse {
+  // sha256 is the lowercase hex SHA-256 of the stored fullchain.pem.
+  string sha256 = 1;
+  // stored reports whether the files were written; false when the same
+  // certificate was there already.
+  bool stored = 2;
+  // not_after is when the certificate expires (RFC 3339).
+  string not_after = 3;
+}
+
+message Egress {
+  string id = 1;
+  EgressKind kind = 2;
+  // params_json holds the kind-specific parameters. It may carry credentials:
+  // never log it.
+  string params_json = 3;
+  // refresh_nonce asks the node to fetch the subscription of an
+  // XRAY_SUBSCRIPTION egress again (Ruling S2-17): a value other than the one
+  // the node last fetched it with makes it fetch the subscription at once.
+  // The panel changes it when the operator asks for a refresh.
+  uint64 refresh_nonce = 4;
+}
+
+enum EgressKind {
+  EGRESS_KIND_UNSPECIFIED = 0;
+  EGRESS_KIND_DIRECT = 1;
+  EGRESS_KIND_SOCKS5 = 2;
+  EGRESS_KIND_HTTP = 3;
+  EGRESS_KIND_XRAY_URI = 4;
+  EGRESS_KIND_XRAY_SUBSCRIPTION = 5;
+  EGRESS_KIND_WARP = 6;
+  EGRESS_KIND_PSIPHON = 7;
+}
+
+message EgressChain {
+  string id = 1;
+  repeated string member_egress_ids = 2;
+  HealthCheck check = 3;
+}
+
+message HealthCheck {
+  uint32 interval_seconds = 1;
+  uint32 timeout_seconds = 2;
+  uint32 fail_threshold = 3;
+  uint32 recover_threshold = 4;
+  repeated string dc_addrs = 5;
+}
+
+message ArtifactRef {
+  string engine = 1;
+  string version = 2;
+  string arch = 3;
+  string sha256 = 4;
+  string file_name = 5;
+  // url is where a node of artifact_source "direct" downloads the file from;
+  // the panel sets it for such nodes only.
+  string url = 6;
+  string binary = 7;
+  // state says whether the node can run the artifact, from its trial run
+  // (GetInfo only): "" when the trial passed, "untried" when no trial has
+  // run (the node answered tried=false to the upload), "unusable" when it
+  // failed. state_reason says why, in at most 256 bytes.
+  string state = 8;
+  string state_reason = 9;
+}
+
+message ApplyStateRequest {
+  NodeState state = 1;
+}
+
+message ApplyStateResponse {
+  bool accepted = 1;
+  string reason = 2;
+  uint64 generation = 3;
+}
+
+message WatchRequest {
+  uint64 cursor = 1;
+  // ip_policy is the panel's IP policy: the node sends client addresses only
+  // when its own policy and this one are both full, and country minutes only
+  // when neither is off (R6-5). Unset means the node's own.
+  IpPolicy ip_policy = 2;
+}
+
+message WatchResponse {
+  uint64 seq = 1;
+  int64 ts_unix = 2;
+  oneof payload {
+    StateReport state = 10;
+    StatsBatch stats = 11;
+    NodeEvent event = 12;
+    DiagnosticsReport diagnostics = 13;
+  }
+}
+
+message StateReport {
+  uint64 applied_generation = 1;
+  repeated ProxyStatus proxies = 2;
+  repeated EgressMemberHealth egress = 3;
+  // last_error is why the last reconcile pass failed as a whole: the node
+  // could not apply its desired state (Docker unreachable, the edge not
+  // answering, a configuration the edge refused, such as a listener it cannot
+  // bind). Empty after a pass that went through. At most 512 bytes of text,
+  // the text of the reconcile_failed event, which never holds a secret.
+  string last_error = 4;
+  // egress_instances are the provider instances (Xray, Psiphon), one per
+  // egress of a provider that has one or should have one (capability
+  // "rollout-status").
+  repeated EgressInstanceStatus egress_instances = 5;
+  reserved 6;
+  reserved "takeover";
+}
+
+message ProxyStatus {
+  string proxy_id = 1;
+  ProxyPhase phase = 2;
+  string reason = 3;
+  // engine and running_version are those of the serving instance; the
+  // desired engine only while nothing serves the proxy (capability
+  // "rollout-status"; before it, engine was the desired proxy's).
+  Engine engine = 4;
+  string running_version = 5;
+  uint64 instance_generation = 6;
+  // failed_engine and failed_version are set while an attempt at the proxy's
+  // current desired instance was aborted (readiness, the probe, the gate, the
+  // container start, the render, a missing, untried or unusable artifact), to
+  // that instance's engine and version, and are cleared when the desired
+  // instance serves or the desired instance changes. reason says why.
+  Engine failed_engine = 7;
+  string failed_version = 8;
+}
+
+// EgressInstanceStatus is the state of the provider instance of an egress.
+message EgressInstanceStatus {
+  string egress_id = 1;
+  // provider is the binary of the serving instance ("xray",
+  // "psiphon-core"; "warp-plus" from an older agent), or
+  // of the desired one while none serves.
+  string provider = 2;
+  // version and generation are the serving instance's; empty and 0 while none
+  // serves.
+  string version = 3;
+  uint64 generation = 4;
+  // phase is serving, starting, failed or draining.
+  string phase = 5;
+  string reason = 6;
+  // failed_version is set while an attempt at the desired instance was
+  // aborted, to its version, as ProxyStatus.failed_version.
+  string failed_version = 7;
+}
+
+enum ProxyPhase {
+  PROXY_PHASE_UNSPECIFIED = 0;
+  PROXY_PHASE_PENDING = 1;
+  PROXY_PHASE_STARTING = 2;
+  PROXY_PHASE_READY = 3;
+  PROXY_PHASE_SERVING = 4;
+  PROXY_PHASE_DRAINING = 5;
+  PROXY_PHASE_FAILED = 6;
+  PROXY_PHASE_PAUSED = 7;
+}
+
+message EgressMemberHealth {
+  string chain_id = 1;
+  string member_key = 2;
+  string status = 3;
+  uint32 latency_ms = 4;
+  string exit_ip = 5;
+  // checked_unix is when the edge last checked the member, in Unix seconds; 0
+  // before the first check.
+  int64 checked_unix = 6;
+}
+
+message StatsBatch {
+  int64 minute_unix = 1;
+  repeated ProxyMinute proxies = 2;
+  NodeMinute node = 3;
+  repeated IpSighting ips = 4;
+  repeated CountryMinute countries = 5;
+  repeated MemberMinute members = 6;
+  repeated ProbeResult probes = 7;
+}
+
+message ProxyMinute {
+  string proxy_id = 1;
+  uint64 up = 2;
+  uint64 down = 3;
+  uint32 conns_new = 4;
+  uint32 conns_peak = 5;
+  uint32 devices = 6;
+  uint32 conns_active = 7;
+}
+
+message NodeMinute {
+  double cpu = 1;
+  uint64 mem_used = 2;
+  uint64 mem_total = 3;
+  double load1 = 4;
+  uint64 disk_used = 5;
+  uint64 disk_total = 6;
+  uint64 net_rx = 7;
+  uint64 net_tx = 8;
+  uint32 conns = 9;
+  // The edge's refusal counters of the minute: connections refused before
+  // their ClientHello, refused in all, and pre-hello connections evicted.
+  uint64 refused_prehello = 10;
+  uint64 refused_total = 11;
+  uint64 evicted_prehello = 12;
+}
+
+// CountryMinute is a proxy's client addresses of one country in a minute:
+// how many distinct ones and their bytes. The node looks the country up
+// (GeoIPRef); no address leaves it.
+message CountryMinute {
+  string proxy_id = 1;
+  string country = 2;
+  uint32 ips = 3;
+  uint64 bytes = 4;
+}
+
+// MemberMinute is the health of an egress member at the end of a minute.
+message MemberMinute {
+  string chain_id = 1;
+  string member_key = 2;
+  string status = 3;
+  uint32 latency_ms = 4;
+  string exit_ip = 5;
+}
+
+// ProbeResult is one probe the node ran on a proxy (kind "l2").
+message ProbeResult {
+  string proxy_id = 1;
+  string kind = 2;
+  bool ok = 3;
+  uint32 latency_ms = 4;
+  string error = 5;
+  int64 at_unix = 6;
+}
+
+message IpSighting {
+  string proxy_id = 1;
+  string ip = 2;
+  int64 first_seen = 3;
+  int64 last_seen = 4;
+  uint64 bytes = 5;
+}
+
+message NodeEvent {
+  string kind = 1;
+  string severity = 2;
+  string message = 3;
+  string proxy_id = 4;
+  map<string, string> details = 5;
+}
+
+message UploadArtifactRequest {
+  oneof part {
+    ArtifactRef meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+message UploadArtifactResponse {
+  bool stored = 1;
+  string sha256 = 2;
+  // After the store took the artifact the node tries the binary out in the
+  // runner image (capability "artifact-trial"). tried says whether the trial
+  // ran: the container started and exited, or Docker refused to start the
+  // binary itself. When it ran, usable says whether it passed, and reason
+  // why not. When it did not run (Docker unreachable, the runner image
+  // missing), usable is false, reason starts with "trial not run:", the node
+  // records nothing, and the panel uploads again later.
+  bool usable = 3;
+  string reason = 4;
+  bool tried = 5;
+}
+
+message UpdateSelfRequest {
+  oneof part {
+    NodeBinary meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+// NodeBinary describes a postern-node release binary. signature is the text of
+// its .minisig file. A version older than the running one is installed only
+// with rollback set, and only when it is the one bin/previous points to.
+message NodeBinary {
+  string version = 1;
+  string arch = 2;
+  string sha256 = 3;
+  uint64 size = 4;
+  string signature = 5;
+  bool rollback = 6;
+}
+
+// UpdateSelfResponse names the installed version; restarting says that
+// bin/current changed and the agent restarts into it (false: it pointed at
+// that version already).
+message UpdateSelfResponse {
+  string version = 1;
+  bool restarting = 2;
+}
+
+message UpdateEdgeRequest {
+  string version = 1;
+  // rollback allows a version older than the running edge's: only the one the
+  // edge ran before its last roll.
+  bool rollback = 2;
+}
+
+// UpdateEdgeResponse names the edge generation that runs the version.
+message UpdateEdgeResponse {
+  uint64 generation = 1;
+  string version = 2;
+}
+
+message StreamLogsRequest {
+  string target = 1;
+  uint32 tail = 2;
+  bool follow = 3;
+}
+
+message StreamLogsResponse {
+  int64 ts_unix_nano = 1;
+  string stream = 2;
+  string line = 3;
+}
+
+message UploadGeoIPRequest {
+  oneof part {
+    GeoIPRef meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+message UploadGeoIPResponse {
+  bool stored = 1;
+  string sha256 = 2;
+}
+
+message RunDiagnosticsRequest {
+  // scope is "node" (every check of every target) or "proxy:<id>".
+  string scope = 1;
+}
+
+// DiagnosticResult is one check's result (spec 5.7): layer is host, ingress,
+// engine, egress, web, e2e or panel; target "" (the node), "listener:<id>",
+// "proxy:<id>" or "member:<chain id>/<member key>"; summary at most 200
+// bytes; evidence only for warn and fail, plain text; fix the id of the fix
+// the panel can offer, if any.
+message DiagnosticResult {
+  string id = 1;
+  string layer = 2;
+  string target = 3;
+  CheckStatus status = 4;
+  string summary = 5;
+  string evidence = 6;
+  string hint = 7;
+  string fix = 8;
+  int64 checked_unix = 9;
+  uint32 duration_ms = 10;
+}
+
+enum CheckStatus {
+  CHECK_STATUS_UNSPECIFIED = 0;
+  CHECK_STATUS_OK = 1;
+  CHECK_STATUS_WARN = 2;
+  CHECK_STATUS_FAIL = 3;
+  CHECK_STATUS_SKIP = 4;
+}
+
+// DiagnosticsReport is the whole set of the node's light checks, sent as a
+// Watch record when a status changed.
+message DiagnosticsReport {
+  repeated DiagnosticResult results = 1;
+}

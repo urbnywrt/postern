@@ -1,0 +1,247 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// MetricsService serves the statistics of the nodes, of the proxies taken
+// together, of the countries of the clients, of where client addresses were
+// seen, and of the members of egress chains.
+//
+// A range is "1h", "24h" (also what empty means), "7d", "30d", "90d" or "1y"
+// (365 days), and ends at the end of the current period. A series is read in
+// minutes while the range fits the minutes that the statistics settings keep,
+// in hours while it fits the hours, and in days beyond; step_seconds says
+// which (60, 3600 or 86400). Totals (TopProxies, Countries) count from the
+// start of the range to now, the partial hours at both ends from the minutes.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INVALID_ARGUMENT: a range, a limit or an offset is out of bounds, or
+//     Countries names both a proxy and a node.
+//   - NOT_FOUND: the node or the proxy named does not exist.
+//   - FAILED_PRECONDITION: ListIpSightings while the IP policy is not "full".
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+service MetricsService {
+  // Overview returns every node: its latest minute (of the last 3 minutes),
+  // what its proxies carried since since_unix, and how many of its proxies
+  // serve, have failed and are paused.
+  rpc Overview(OverviewRequest) returns (OverviewResponse);
+
+  // NodeSeries returns the load and the traffic of a node over a range.
+  rpc NodeSeries(NodeSeriesRequest) returns (NodeSeriesResponse);
+
+  // TopProxies returns the proxies that carried the most over a range, of a
+  // node or of every node.
+  rpc TopProxies(TopProxiesRequest) returns (TopProxiesResponse);
+
+  // Countries returns the countries of the clients over a range, of a proxy,
+  // of the proxies of a node, or of every proxy, with the IP policy and the
+  // attribution that DB-IP asks for next to its data.
+  rpc Countries(CountriesRequest) returns (CountriesResponse);
+
+  // ListIpSightings returns where client addresses were seen on a proxy, the
+  // ones seen last first. They are kept only under the IP policy "full";
+  // under another policy the call fails with FAILED_PRECONDITION.
+  rpc ListIpSightings(ListIpSightingsRequest) returns (ListIpSightingsResponse);
+
+  // EgressHistory returns the hours of the members of the egress chains of a
+  // node over a range of at most 30 days (hours are kept for 30 days).
+  rpc EgressHistory(EgressHistoryRequest) returns (EgressHistoryResponse);
+}
+
+message OverviewRequest {
+  // since_unix is where the traffic of the nodes is counted from, in Unix
+  // seconds: the local midnight of the browser, typically. 0 is 24 hours
+  // ago; otherwise at most one year ago and not in the future.
+  int64 since_unix = 1;
+}
+
+message OverviewResponse {
+  // nodes are by name, then id.
+  repeated NodeOverview nodes = 1;
+  int64 since_unix = 2;
+  int64 now_unix = 3;
+}
+
+// NodeOverview is a node at a glance.
+message NodeOverview {
+  string node_id = 1;
+  // minute_unix is the start of the latest minute of the node, 0 when it has
+  // reported none in the last 3 minutes (the load is then all zero).
+  int64 minute_unix = 2;
+  double cpu = 3;
+  uint64 mem_used = 4;
+  uint64 mem_total = 5;
+  double load1 = 6;
+  uint64 disk_used = 7;
+  uint64 disk_total = 8;
+  uint32 conns = 9;
+  // up and down are the bytes that the proxies of the node carried since
+  // since_unix.
+  uint64 up = 10;
+  uint64 down = 11;
+  // proxies is how many proxies the node has; serving and failed are how
+  // many of them it last reported in the phases "serving" and "failed";
+  // paused is how many are disabled.
+  uint32 proxies = 12;
+  uint32 serving = 13;
+  uint32 failed = 14;
+  uint32 paused = 15;
+}
+
+message NodeSeriesRequest {
+  string node_id = 1;
+  string range = 2;
+}
+
+message NodeSeriesResponse {
+  // step_seconds is the length of a point: 60, 3600 or 86400.
+  uint32 step_seconds = 1;
+  // The points are the periods that start in [from_unix, to_unix), oldest
+  // first. A period without statistics has no point.
+  int64 from_unix = 2;
+  int64 to_unix = 3;
+  repeated NodePoint points = 4;
+}
+
+// NodePoint is the load and the traffic of a node in one period. Over hours
+// and days, cpu, mem_used, load1 and disk_used are averages, mem_total,
+// disk_total and conns the highest of the minutes, and the bytes and the
+// refusals sums. up, down and devices_sum are of the proxies of the node:
+// devices_sum is the sum of their unique IPs (the highest of each proxy's
+// minutes over longer periods), "Unique IPs, sum of proxies".
+message NodePoint {
+  int64 ts_unix = 1;
+  double cpu = 2;
+  uint64 mem_used = 3;
+  uint64 mem_total = 4;
+  double load1 = 5;
+  uint64 disk_used = 6;
+  uint64 disk_total = 7;
+  uint64 net_rx = 8;
+  uint64 net_tx = 9;
+  uint32 conns = 10;
+  uint64 refused_prehello = 11;
+  uint64 refused_total = 12;
+  uint64 evicted_prehello = 13;
+  uint64 up = 14;
+  uint64 down = 15;
+  uint32 devices_sum = 16;
+}
+
+message TopProxiesRequest {
+  // node_id is empty for the proxies of every node.
+  string node_id = 1;
+  string range = 2;
+  // limit is at most 50; 0 is 10.
+  uint32 limit = 3;
+}
+
+message TopProxiesResponse {
+  // proxies are the busiest first (by up + down, then by id).
+  repeated ProxyTotal proxies = 1;
+  int64 from_unix = 2;
+  int64 to_unix = 3;
+}
+
+// ProxyTotal is what a proxy carried over a range: bytes, connections opened,
+// and the most unique client IPs of one of its periods.
+message ProxyTotal {
+  string proxy_id = 1;
+  string name = 2;
+  string node_id = 3;
+  uint64 up = 4;
+  uint64 down = 5;
+  uint64 conns_new = 6;
+  uint32 devices_peak = 7;
+}
+
+message CountriesRequest {
+  // At most one of proxy_id and node_id; neither is every proxy.
+  string proxy_id = 1;
+  string node_id = 2;
+  string range = 3;
+}
+
+message CountriesResponse {
+  // countries are those with the most bytes first; country "" holds the
+  // clients whose country is not known.
+  repeated CountryTotal countries = 1;
+  // policy is the IP policy: "full", "countries" or "off" (nothing is kept).
+  string policy = 2;
+  // geoip_month is the month of the country database ("2026-10"), empty
+  // when the panel has none.
+  string geoip_month = 3;
+  string attribution = 4;
+  string attribution_url = 5;
+  int64 from_unix = 6;
+  int64 to_unix = 7;
+}
+
+// CountryTotal is what the clients of one country did over a range: their
+// bytes, and the most unique client IPs that the country had in one minute
+// ("peak unique IPs in a minute").
+message CountryTotal {
+  string country = 1;
+  uint64 bytes = 2;
+  uint32 ips_peak = 3;
+}
+
+message ListIpSightingsRequest {
+  string proxy_id = 1;
+  // country narrows the list to a country code ("DE"); empty is every one.
+  string country = 2;
+  // limit is at most 200; 0 is 50.
+  uint32 limit = 3;
+  uint32 offset = 4;
+}
+
+message ListIpSightingsResponse {
+  repeated IpSighting sightings = 1;
+  // total is how many sightings match, of which this is a page.
+  uint32 total = 2;
+}
+
+// IpSighting is where a client address was seen on a proxy.
+message IpSighting {
+  string ip = 1;
+  string country = 2;
+  int64 first_seen_unix = 3;
+  int64 last_seen_unix = 4;
+  uint64 bytes = 5;
+}
+
+message EgressHistoryRequest {
+  string node_id = 1;
+  // range is "1h", "24h" (also what empty means), "7d" or "30d".
+  string range = 2;
+}
+
+message EgressHistoryResponse {
+  // members are by chain, then member key.
+  repeated MemberHistory members = 1;
+  int64 from_unix = 2;
+  int64 to_unix = 3;
+}
+
+// MemberHour is the health of a member in one hour: the minutes it was up,
+// down and unknown, its latency (average and highest of the minutes it was
+// up), and the last exit address of the hour that is known.
+message MemberHour {
+  int64 ts_unix = 1;
+  uint32 up_minutes = 2;
+  uint32 down_minutes = 3;
+  uint32 unknown_minutes = 4;
+  uint32 latency_avg_ms = 5;
+  uint32 latency_max_ms = 6;
+  string exit_ip = 7;
+}
+
+// MemberHistory is the hours of one member of a chain, oldest first.
+message MemberHistory {
+  string chain_id = 1;
+  string member_key = 2;
+  repeated MemberHour hours = 3;
+}

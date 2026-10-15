@@ -1,0 +1,156 @@
+{
+  "generation": "9",
+  "settings": {
+    "default_chain_id": "01K6Y0000000000000000000C1",
+    "domain_pool": [
+      "a.example",
+      "b.example",
+      "c.example"
+    ],
+    "ip_policy": "IP_POLICY_COUNTRIES",
+    "dns_mode": "system",
+    "ip_retention_hours": 168
+  },
+  "listeners": [
+    {
+      "id": "01K6Y0000000000000000000A1",
+      "kind": "LISTENER_KIND_TLS",
+      "bind_ip": "0.0.0.0",
+      "port": 443,
+      "stranger_action": "STRANGER_ACTION_MASK",
+      "non_tls_action": "NON_TLS_ACTION_DROP"
+    },
+    {
+      "id": "01K6Y0000000000000000000A2",
+      "kind": "LISTENER_KIND_TLS",
+      "bind_ip": "198.51.100.7",
+      "port": 8443,
+      "stranger_action": "STRANGER_ACTION_REJECT",
+      "mask_target": "mask.example.com:443",
+      "non_tls_action": "NON_TLS_ACTION_HTTP400"
+    }
+  ],
+  "proxies": [
+    {
+      "id": "01K6Y0000000000000000000B1",
+      "listener_id": "01K6Y0000000000000000000A1",
+      "type": "PROXY_TYPE_FAKETLS",
+      "enabled": true,
+      "secret": "<secret of 01K6Y0000000000000000000B1>",
+      "domain": "cdn.example.com",
+      "engine": "ENGINE_TELEMT",
+      "engine_version": "3.5.13",
+      "egress_chain_id": "01K6Y0000000000000000000C2",
+      "egress_scope_chains": {
+        "me": "01K6Y0000000000000000000C3"
+      },
+      "limits": {
+        "devices": 3,
+        "conns_total": 100,
+        "conns_per_ip": 10
+      }
+    },
+    {
+      "id": "01K6Y0000000000000000000B2",
+      "listener_id": "01K6Y0000000000000000000A2",
+      "type": "PROXY_TYPE_FAKETLS",
+      "secret": "<secret of 01K6Y0000000000000000000B2>",
+      "domain": "WWW.Example.COM",
+      "engine": "ENGINE_TELEMT",
+      "engine_version": "3.5.13",
+      "egress_scope_chains": {
+        "fetch": "01K6Y0000000000000000000C4"
+      },
+      "limits": {},
+      "ad_tag": "aabbccddeeff00112233445566778899",
+      "use_middle_proxy": true
+    }
+  ],
+  "egresses": [
+    {
+      "id": "01K6Y0000000000000000000E1",
+      "kind": "EGRESS_KIND_XRAY_URI",
+      "params_json": "{\"uri\":\"vless://00000000-0000-4000-8000-000000000001@vless.example.com:443?security=reality&sni=www.example.com&fp=chrome&pbk=fake-public-key-for-tests-0000000000000&sid=0123456789abcdef&type=tcp#exit\"}"
+    },
+    {
+      "id": "01K6Y0000000000000000000E2",
+      "kind": "EGRESS_KIND_SOCKS5",
+      "params_json": "{\"addr\":\"198.51.100.9:1080\",\"username\":\"user\",\"password\":\"pass-word-not-real\"}"
+    },
+    {
+      "id": "01K6Y0000000000000000000E3",
+      "kind": "EGRESS_KIND_WARP",
+      "params_json": "{}"
+    },
+    {
+      "id": "01K6Y0000000000000000000E4",
+      "kind": "EGRESS_KIND_PSIPHON",
+      "params_json": "{\"country\":\"DE\"}"
+    },
+    {
+      "id": "01K6Y0000000000000000000E5",
+      "kind": "EGRESS_KIND_XRAY_SUBSCRIPTION",
+      "params_json": "{\"url\":\"https://sub.example.com/sub-token-not-real-0\",\"select\":\"first\"}",
+      "refresh_nonce": "2"
+    }
+  ],
+  "chains": [
+    {
+      "id": "01K6Y0000000000000000000C1",
+      "member_egress_ids": [
+        "01K6Y0000000000000000000E1",
+        "01K6Y0000000000000000000E2"
+      ],
+      "check": {
+        "interval_seconds": 5,
+        "dc_addrs": [
+          "149.154.167.51:443"
+        ]
+      }
+    },
+    {
+      "id": "01K6Y0000000000000000000C2",
+      "member_egress_ids": [
+        "01K6Y0000000000000000000E3"
+      ]
+    },
+    {
+      "id": "01K6Y0000000000000000000C3",
+      "member_egress_ids": [
+        "01K6Y0000000000000000000E4"
+      ]
+    },
+    {
+      "id": "01K6Y0000000000000000000C4",
+      "member_egress_ids": [
+        "01K6Y0000000000000000000E5"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "engine": "psiphon-core",
+      "version": "20261005-c4a09096ab",
+      "arch": "amd64",
+      "sha256": "c1767915e1773bd812b64238377de262b135d9aafe097b24e09190ff6e4b0b33",
+      "file_name": "psiphon-core-linux-amd64",
+      "binary": "psiphon-core"
+    },
+    {
+      "engine": "telemt",
+      "version": "3.5.13",
+      "arch": "amd64",
+      "sha256": "7124a854310d4c91a502aeebfd29f7fc6ddef1dcd44eb0cb72e9f9c176582b43",
+      "file_name": "telemt-x86_64-linux-musl.tar.gz",
+      "binary": "telemt"
+    },
+    {
+      "engine": "xray",
+      "version": "v26.3.27",
+      "arch": "amd64",
+      "sha256": "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae",
+      "file_name": "Xray-linux-64.zip",
+      "binary": "xray"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "log": {
+    "access": "none",
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "in-warp",
+      "listen": "127.0.0.1",
+      "port": 35002,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      "tag": "out-warp",
+      "protocol": "wireguard",
+      "settings": {
+        "secretKey": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+        "address": [
+          "198.51.100.2/32",
+          "2001:db8:110::2/128"
+        ],
+        "peers": [
+          {
+            "publicKey": "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM=",
+            "endpoint": "warp.example.com:2408",
+            "allowedIPs": [
+              "0.0.0.0/0",
+              "::/0"
+            ]
+          }
+        ],
+        "reserved": [
+          171,
+          1,
+          254
+        ],
+        "mtu": 1280,
+        "noKernelTun": true
+      }
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "in-warp"
+        ],
+        "outboundTag": "out-warp"
+      }
+    ]
+  }
+}

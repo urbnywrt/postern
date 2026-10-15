@@ -1,0 +1,67 @@
+{
+  "log": {
+    "access": "none",
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "in-0123456789ab",
+      "listen": "127.0.0.1",
+      "port": 35001,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      "tag": "out-0123456789ab",
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "2001:db8::7",
+            "port": 443,
+            "users": [
+              {
+                "id": "11111111-2222-3333-4444-555555555555",
+                "security": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "grpc.example.com",
+          "fingerprint": "safari",
+          "alpn": [
+            "h2"
+          ]
+        },
+        "grpcSettings": {
+          "serviceName": "grpc-service",
+          "multiMode": true
+        }
+      }
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "in-0123456789ab"
+        ],
+        "outboundTag": "out-0123456789ab"
+      }
+    ]
+  }
+}

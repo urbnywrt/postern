@@ -1,0 +1,322 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// DeployService installs nodes over SSH. The panel logs in to the server of a
+// node, as root or as a user with passwordless sudo, checks the server
+// (Preflight), and installs the node there from the node kit and the bundle
+// of the node, in a job whose log the UI follows (Install, GetJob).
+//
+// Host keys: the panel sends credentials only to a server whose host key an
+// admin has confirmed. The first Preflight of a server answers with the
+// fingerprint of its key instead of a report; once the admin has compared it,
+// the next call carries it in the target. The confirmed key is kept with the
+// node, and a server that presents another key later is refused, with both
+// fingerprints, until an admin trusts the new key (replace_host_key).
+//
+// Credentials are a password, or a private key with its passphrase. The panel
+// keeps them only when Install asks it to (remember), sealed, and never sends
+// them back.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a host that is
+//     neither an IP address nor a host name, or no credentials.
+//   - NOT_FOUND: there is no such node or job, or the job is not an install.
+//   - PERMISSION_DENIED: the server refused the credentials, or the private
+//     key needs a passphrase that was not given or does not open it.
+//   - FAILED_PRECONDITION: the host key of the server has not been confirmed
+//     (Install), no credentials are saved for use_saved, the node runs a job
+//     already, sudo wants a password, the node has no certificate, or the
+//     answer of the server could not be read; the message says which.
+//   - UNAVAILABLE: the server could not be reached.
+//   - DEADLINE_EXCEEDED: the server did not answer in time.
+service DeployService {
+  // GetTarget says how the panel last reached the server of a node, whether
+  // it keeps credentials for it, and which install the node runs, if any.
+  rpc GetTarget(GetTargetRequest) returns (GetTargetResponse);
+
+  // Preflight logs in to the server and finds out whether a node can be
+  // installed there: the system, Docker, the free space, the listening ports,
+  // and the clock. It changes nothing on the server. A server
+  // whose host key has not been confirmed answers with its key instead.
+  rpc Preflight(PreflightRequest) returns (PreflightResponse);
+
+  // Install starts the job that installs the node: it checks the server again,
+  // installs Docker when asked to and needed, copies the node kit of the
+  // architecture of the server and the bundle of the node, runs install.sh,
+  // removes the bundle, and waits for the node to come online, for at most 3
+  // minutes. The job refuses a server that Preflight reports blockers for.
+  // Running it again on an installed node installs it again.
+  rpc Install(InstallRequest) returns (InstallResponse);
+
+  // GetJob returns an install with its log. The UI asks every second while
+  // the job runs. A job of another kind is NOT_FOUND.
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+
+  // CancelJob cancels a running install. A job of another kind is NOT_FOUND,
+  // and keeps running. The command that runs on the server is asked to stop
+  // (TERM): install.sh, or the setup of Docker, stops at once; the program of
+  // its current step, such as apt-get or docker compose, may run to its end.
+  // The bundle is removed from the server when install.sh has stopped, and
+  // again by the panel. The job ends as cancelled, and its error names a
+  // bundle that could not be removed; the node may be installed in part, and
+  // is installed again with Install.
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+}
+
+// SshTarget is a server and the user to log in as.
+message SshTarget {
+  // host is an IP address (IPv6 without brackets) or a host name.
+  string host = 1;
+  // port is 1 to 65535; 0 means 22.
+  uint32 port = 2;
+  // user is root, or a user with passwordless sudo.
+  string user = 3;
+  // host_key is the fingerprint of the host key that the admin confirmed,
+  // "SHA256:..." as ssh-keygen -l prints it, and host_key_type its type, as
+  // PreflightResponse.host_key gave them; both are empty until then.
+  string host_key = 4;
+  string host_key_type = 5;
+}
+
+// SshCredentials are what the panel logs in with.
+message SshCredentials {
+  // password, or private_key, in PEM (OpenSSH, PKCS #1, PKCS #8 or SEC 1),
+  // with its passphrase when it is encrypted. With both, the key is tried
+  // first.
+  string password = 1;
+  string private_key = 2;
+  string passphrase = 3;
+  // use_saved logs in with the credentials that the panel keeps for the node
+  // (GetTargetResponse.saved_credentials) instead, which are for the target
+  // and the host key that it keeps: never with replace_host_key. The panel
+  // forgets them when the host key of the server is replaced.
+  bool use_saved = 4;
+}
+
+message GetTargetRequest {
+  string node_id = 1;
+}
+
+message GetTargetResponse {
+  // target is how the panel last reached the server of the node, with the
+  // host key that the admin confirmed; unset when it never has.
+  SshTarget target = 1;
+  // saved_credentials is "password" or "key" when the panel keeps
+  // credentials for the node, empty when it keeps none.
+  string saved_credentials = 2;
+  // running_job_id is the install that the node runs, empty for none. A node
+  // that runs a job of another kind, such as a collection, has none here, and
+  // Install is refused for it all the same: a node runs one job at a time.
+  string running_job_id = 3;
+}
+
+message PreflightRequest {
+  string node_id = 1;
+  SshTarget target = 2;
+  SshCredentials credentials = 3;
+  // replace_host_key trusts target.host_key instead of the key that was
+  // confirmed for the server before: the answer of an admin to a changed key.
+  // With an empty host_key the server is met as for the first time, and the
+  // answer is its key to confirm (for a server that no longer offers a key of
+  // the type of the confirmed one).
+  bool replace_host_key = 4;
+  reserved 5;
+  reserved "migration";
+  // panel_url is the address that the node reaches the panel at,
+  // https://host[:port] (as CreateJoinTokenRequest.panel_url). When the panel
+  // has a node image and the address is set, the install starts the node
+  // with the Docker command (install_method "docker"), and an address that is
+  // not valid is InvalidArgument; without a node image or with no address it
+  // copies the node kit and runs install.sh ("kit").
+  string panel_url = 6;
+}
+
+message PreflightResponse {
+  oneof result {
+    // host_key is the key of a server whose key has not been confirmed: the
+    // admin compares it, and the next call carries it in the target.
+    HostKey host_key = 1;
+    // host_key_changed refuses a server that presents a key other than the
+    // confirmed one.
+    HostKeyChanged host_key_changed = 2;
+    // report is what the panel found out about the server.
+    PreflightReport report = 3;
+  }
+}
+
+// HostKey is the host key of a server.
+message HostKey {
+  // fingerprint is "SHA256:...", as ssh-keygen -l prints it.
+  string fingerprint = 1;
+  // type is the type of the key, for example ssh-ed25519.
+  string type = 2;
+}
+
+// HostKeyChanged is a server that does not present the confirmed key.
+message HostKeyChanged {
+  HostKey confirmed = 1;
+  // presented is the key that the server presented. Its fingerprint is empty
+  // when the server no longer offers a key of the type of the confirmed one.
+  HostKey presented = 2;
+}
+
+// PreflightReport is what the panel found out about a server.
+message PreflightReport {
+  // os is the name of the operating system, as os-release has it.
+  string os = 1;
+  // machine is what uname -m says; arch is amd64 or arm64, the architecture
+  // of the node kit, and empty for any other machine.
+  string machine = 2;
+  string arch = 3;
+  // kit_available says whether the panel has the node kit of arch.
+  bool kit_available = 4;
+  // install_dir is the directory that the files of the install go to.
+  string install_dir = 5;
+  bool docker_installed = 6;
+  // docker_version is the version of the Docker daemon, empty when it does
+  // not answer; compose_version that of the Compose v2 plugin, empty when
+  // there is none.
+  string docker_version = 7;
+  string compose_version = 8;
+  // userns_remap says that Docker remaps user namespaces.
+  bool userns_remap = 9;
+  // disk_path is /opt, or / when there is no /opt, and the two sizes are
+  // those of its file system, 0 when they are not known.
+  string disk_path = 10;
+  uint64 disk_free_bytes = 11;
+  uint64 disk_total_bytes = 12;
+  // listening are the listening TCP sockets of the server.
+  repeated ListeningSocket listening = 13;
+  // public_ips are the public addresses of the interfaces of the server, and
+  // dialed_ip when no interface has it (behind 1:1 NAT).
+  repeated string public_ips = 14;
+  // clock_skew_seconds is how far the clock of the server is ahead of that
+  // of the panel, negative when it is behind.
+  int64 clock_skew_seconds = 15;
+  reserved 16;
+  reserved "legacy";
+  // https_port is port 443, mgmt_port the management port of the node.
+  PortCheck https_port = 17;
+  PortCheck mgmt_port = 18;
+  // issues block the install (severity "blocker") or are for the admin to
+  // know ("warning").
+  repeated PreflightIssue issues = 19;
+  // dialed_ip is the address that the panel connected to, when the host of
+  // the target is a public IP address; it is among public_ips.
+  string dialed_ip = 20;
+  // install_method is how the install goes: "docker", the Docker command of
+  // the node image, which needs no node kit, no bash and no Compose; or
+  // "kit", the node kit and install.sh. install_dir is empty for "docker".
+  string install_method = 21;
+}
+
+// ListeningSocket is a listening TCP socket of a server.
+message ListeningSocket {
+  // address is the address that it listens on: 0.0.0.0 or :: for all of
+  // them, or one address; empty when it could not be read.
+  string address = 1;
+  uint32 port = 2;
+  // processes hold it, as "name (pid N)"; empty when the server does not
+  // say.
+  repeated string processes = 3;
+}
+
+// PortCheck says whether a port that the node needs is free.
+message PortCheck {
+  uint32 port = 1;
+  bool free = 2;
+  // postern says that a container of Postern holds the port: the node is
+  // installed here already.
+  bool postern = 3;
+  // owner is who holds the port when it is taken and not by Postern.
+  string owner = 4;
+  reserved 5;
+  reserved "legacy";
+}
+
+// PreflightIssue is something that the preflight found.
+message PreflightIssue {
+  // code says what it is: not_root, arch_unsupported, kit_missing,
+  // bash_missing, docker_missing, docker_not_running, compose_missing,
+  // userns_remap, https_port_taken, mgmt_port_taken, ports_unknown,
+  // clock_skew or low_disk.
+  string code = 1;
+  // severity is "blocker", which the install is refused for, or "warning".
+  string severity = 2;
+  // message says it in English.
+  string message = 3;
+  // params are what the message names, for the UI: port, owner, arch,
+  // machine, problem, origin, seconds, free_bytes, path, uid; and stopped,
+  // "true" for docker_not_running when the Docker daemon does not run at all.
+  map<string, string> params = 4;
+  // fixed_by_docker_install says that InstallRequest.install_docker mends it.
+  bool fixed_by_docker_install = 5;
+}
+
+message InstallRequest {
+  string node_id = 1;
+  // target is the server, with the host key that the admin confirmed.
+  SshTarget target = 2;
+  SshCredentials credentials = 3;
+  // install_docker sets up Docker when the server needs it. An engine that is
+  // installed is never replaced: a Docker that does not answer is started, and
+  // one without the Compose v2 plugin gets the plugin of the packages that it
+  // comes from (docker-compose-plugin for docker-ce, docker-compose-v2 for
+  // docker.io of Ubuntu, docker-cli-compose on Alpine; no other). Only where
+  // Docker is not installed is it installed: with the script of
+  // get.docker.com, or the packages of the distribution when that fails.
+  bool install_docker = 4;
+  // remember keeps the credentials for the node, sealed. Without it the panel
+  // forgets the credentials that it kept for the node.
+  bool remember = 5;
+  reserved 6;
+  reserved "migration";
+  // panel_url is as in PreflightRequest: with a node image and an address,
+  // the install pulls the node image, removes an old agent container, makes a
+  // join token and starts the node with the Docker command; without, it runs
+  // the node kit's install.sh.
+  string panel_url = 7;
+}
+
+message InstallResponse {
+  // job_id is the job that installs the node.
+  string job_id = 1;
+}
+
+message GetJobRequest {
+  string id = 1;
+}
+
+message GetJobResponse {
+  Job job = 1;
+}
+
+// Job is a long operation on a node, such as an install.
+message Job {
+  string id = 1;
+  string node_id = 2;
+  // kind is what the job does: install.
+  string kind = 3;
+  // status is running, done, failed or cancelled.
+  string status = 4;
+  // log is the output of the job, its newest 1 MiB, with the credentials
+  // replaced by ***.
+  string log = 5;
+  // error says why the job failed or was cancelled. That of a cancelled job is
+  // "the job was cancelled", and then, after "; ", what the admin still has
+  // to do, when there is something: a bundle to remove by hand.
+  string error = 6;
+  int64 started_unix = 7;
+  // finished_unix is 0 while the job runs.
+  int64 finished_unix = 8;
+}
+
+message CancelJobRequest {
+  string id = 1;
+}
+
+message CancelJobResponse {}

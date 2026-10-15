@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# commit-msg: keep private strings out of commit messages.
+#
+# $1 is the path of the file holding the message. See scripts/check-denylist.sh.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+exec "$root/scripts/check-denylist.sh" --message "$1"

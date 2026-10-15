@@ -1,0 +1,149 @@
+{
+  "log": {
+    "access": "none",
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "in-aaaaaaaaaaaa",
+      "listen": "127.0.0.1",
+      "port": 35010,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    },
+    {
+      "tag": "in-bbbbbbbbbbbb",
+      "listen": "127.0.0.1",
+      "port": 35011,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    },
+    {
+      "tag": "in-cccccccccccc",
+      "listen": "127.0.0.1",
+      "port": 35012,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    },
+    {
+      "tag": "out-aaaaaaaaaaaa",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "xhttp.example.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "11111111-2222-3333-4444-555555555555",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "xhttp.example.com",
+          "fingerprint": "chrome"
+        },
+        "xhttpSettings": {
+          "path": "/xh",
+          "host": "xhttp.example.com",
+          "mode": "packet-up",
+          "extra": {
+            "xPaddingBytes": "100-1000",
+            "xmux": {
+              "maxConcurrency": "16-32",
+              "cMaxReuseTimes": "64-128"
+            },
+            "noGRPCHeader": false
+          }
+        }
+      }
+    },
+    {
+      "tag": "out-bbbbbbbbbbbb",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "hu.example.com",
+            "port": 80,
+            "users": [
+              {
+                "id": "short-id-text",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "security": "none",
+        "httpupgradeSettings": {
+          "path": "/hu",
+          "host": "hu.example.com"
+        }
+      }
+    },
+    {
+      "tag": "out-cccccccccccc",
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "203.0.113.20",
+            "port": 8389,
+            "method": "2022-blake3-aes-128-gcm",
+            "password": "RERERERERERERERERERERA=="
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "none"
+      }
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "in-aaaaaaaaaaaa"
+        ],
+        "outboundTag": "out-aaaaaaaaaaaa"
+      },
+      {
+        "inboundTag": [
+          "in-bbbbbbbbbbbb"
+        ],
+        "outboundTag": "out-bbbbbbbbbbbb"
+      },
+      {
+        "inboundTag": [
+          "in-cccccccccccc"
+        ],
+        "outboundTag": "out-cccccccccccc"
+      }
+    ]
+  }
+}

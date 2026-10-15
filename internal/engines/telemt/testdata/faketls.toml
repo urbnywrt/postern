@@ -1,0 +1,49 @@
+[general]
+use_middle_proxy = false
+log_level = "silent"
+data_path = "/etc/telemt/data"
+
+[general.modes]
+classic = false
+secure = false
+tls = true
+
+[general.links]
+show = []
+
+[network]
+stun_use = false
+http_ip_detect_urls = []
+
+[server]
+proxy_protocol_trusted_cidrs = ["127.0.0.1/32"]
+
+[[server.listeners]]
+ip = "127.0.0.1"
+port = 20123
+proxy_protocol = true
+
+[server.api]
+enabled = true
+listen = "127.0.0.1:25123"
+whitelist = ["127.0.0.1/32"]
+auth_header = "api-token-api-token"
+
+[censorship]
+tls_domain = "www.example.com"
+mask = true
+tls_emulation = true
+mask_host = "www.example.com"
+tls_fetch_scope = "fetch"
+
+[access.users]
+p = "00112233445566778899aabbccddeeff"
+
+[[upstreams]]
+type = "socks5"
+address = "127.0.0.1:30123"
+
+[[upstreams]]
+type = "socks5"
+address = "127.0.0.1:30123"
+scopes = "me, fetch"

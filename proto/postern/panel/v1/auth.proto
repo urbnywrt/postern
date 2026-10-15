@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// AuthService signs the admins of the panel in and out and keeps their
+// credentials. A session is an HttpOnly cookie; the browser sends it, and no
+// request carries a token in its body.
+//
+// GetSetupStatus, Setup and Login can be called without a session. Every other
+// procedure of this service, and of the other services of the panel, needs one.
+//
+// Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: no valid session, or Login with the wrong credentials.
+//   - PERMISSION_DENIED: a password or a code that a signed-in admin has to
+//     prove again is wrong, or the setup token is wrong or has expired.
+//   - INVALID_ARGUMENT: a value is not acceptable, for example a password that
+//     is too short, or a code at ConfirmTotp that does not fit the secret.
+//   - FAILED_PRECONDITION: the call does not fit the state, for example Setup
+//     when the panel is set up already.
+//   - RESOURCE_EXHAUSTED: too many failed attempts. The Retry-After header of
+//     the response says how many seconds to wait.
+//   - ABORTED: the password or the TOTP secret of the admin changed while the
+//     call was under way. Call again.
+service AuthService {
+  // GetSetupStatus tells whether the panel has to be set up, which is the case
+  // until the first admin exists.
+  rpc GetSetupStatus(GetSetupStatusRequest) returns (GetSetupStatusResponse);
+
+  // Setup creates the first admin. It needs the one-time setup token that the
+  // panel prints in its log when it starts without an admin. The token is valid
+  // for one hour and is used up by the first Setup that succeeds. Setup does not
+  // sign the new admin in.
+  rpc Setup(SetupRequest) returns (SetupResponse);
+
+  // Login checks the credentials and starts a session: the response sets the
+  // cookie. When the admin has TOTP on and the request has no totp_code, the
+  // password is checked, no session is started, and totp_required is true: the
+  // caller asks for the code and calls Login again with it.
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // Logout ends the session of the caller and clears the cookie.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  // Me describes the signed-in admin.
+  rpc Me(MeRequest) returns (MeResponse);
+
+  // ChangePassword sets a new password. It needs the current password, and,
+  // when the admin has TOTP on, a current code, so that a stolen session is not
+  // enough to take the account over. It ends every session of the admin,
+  // including the one that made the call, and starts a new one for the caller
+  // (the response sets a new cookie).
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+
+  // BeginTotp makes a TOTP secret for the admin to put into an authenticator
+  // app. TOTP is not on until ConfirmTotp has checked a code of that secret. A
+  // later BeginTotp replaces a secret that was not confirmed.
+  rpc BeginTotp(BeginTotpRequest) returns (BeginTotpResponse);
+
+  // ConfirmTotp turns TOTP on, when the code is the current one of the secret
+  // that BeginTotp made. It needs the password of the admin: a stolen session
+  // must not be able to enrol an authenticator of its own.
+  rpc ConfirmTotp(ConfirmTotpRequest) returns (ConfirmTotpResponse);
+
+  // DisableTotp turns TOTP off. It needs the password and a current code. Like
+  // ChangePassword, it ends every session and starts a new one for the caller.
+  rpc DisableTotp(DisableTotpRequest) returns (DisableTotpResponse);
+}
+
+message GetSetupStatusRequest {}
+
+message GetSetupStatusResponse {
+  // needs_setup is true while the panel has no admin.
+  bool needs_setup = 1;
+}
+
+message SetupRequest {
+  // setup_token is the token from the log of the panel.
+  string setup_token = 1;
+  // username has 1 to 64 characters, with no spaces. It is not case-sensitive.
+  string username = 2;
+  // password has at least 12 characters and at most 256 bytes.
+  string password = 3;
+}
+
+message SetupResponse {}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+  // totp_code is the code of the authenticator app. Leave it empty on the first
+  // call; the response says whether it is needed.
+  string totp_code = 3;
+}
+
+message LoginResponse {
+  // totp_required is true when the password is right and the admin has TOTP on,
+  // but the request had no code. No session was started.
+  bool totp_required = 1;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}
+
+message MeRequest {}
+
+message MeResponse {
+  string username = 1;
+  bool totp_enabled = 2;
+}
+
+message ChangePasswordRequest {
+  string current_password = 1;
+  // new_password has at least 12 characters and at most 256 bytes.
+  string new_password = 2;
+  // totp_code is the 6-digit code that the app shows. It is needed when the
+  // admin has TOTP on (see MeResponse.totp_enabled), and ignored when not. A
+  // code that was used before, to sign in for example, is not accepted again:
+  // wait for the next one.
+  string totp_code = 3;
+}
+
+message ChangePasswordResponse {}
+
+message BeginTotpRequest {}
+
+message BeginTotpResponse {
+  // secret is the TOTP secret in base32, to type into an app by hand.
+  string secret = 1;
+  // otpauth_uri is the otpauth:// URI that apps read from a QR code.
+  string otpauth_uri = 2;
+}
+
+message ConfirmTotpRequest {
+  // code is the 6-digit code that the app shows.
+  string code = 1;
+  // password is the current password of the admin.
+  string password = 2;
+}
+
+message ConfirmTotpResponse {}
+
+message DisableTotpRequest {
+  string password = 1;
+  // code is the 6-digit code that the app shows.
+  string code = 2;
+}
+
+message DisableTotpResponse {}

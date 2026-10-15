@@ -1,0 +1,5 @@
+LISTEN 0      4096         0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=702,fd=3))
+LISTEN 0      4096         0.0.0.0:443        0.0.0.0:*    users:(("postern-node",pid=3311,fd=9))
+LISTEN 0      4096       127.0.0.1:20001      0.0.0.0:*    users:(("telemt",pid=3402,fd=12))
+LISTEN 0      4096               *:61443            *:*    users:(("current",pid=2950,fd=7))
+LISTEN 0      4096            [::]:22            [::]:*    users:(("sshd",pid=702,fd=4))

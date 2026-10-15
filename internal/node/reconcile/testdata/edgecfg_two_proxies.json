@@ -1,0 +1,128 @@
+{
+  "generation": "5",
+  "listeners": [
+    {
+      "id": "L1",
+      "bindIp": "0.0.0.0",
+      "port": 443,
+      "kind": "tls",
+      "strangerAction": "mask",
+      "nonTlsAction": "drop"
+    },
+    {
+      "id": "L2",
+      "bindIp": "203.0.113.10",
+      "port": 8443,
+      "kind": "tls",
+      "strangerAction": "reject",
+      "maskTarget": "mask.example.com:443",
+      "nonTlsAction": "http400"
+    }
+  ],
+  "routes": [
+    {
+      "listenerId": "L1",
+      "sni": "a.example.com",
+      "proxyId": "P1",
+      "kind": "engine",
+      "backend": "127.0.0.1:20003",
+      "proxyProtocol": true,
+      "limits": {
+        "devices": 3,
+        "connsTotal": 100,
+        "connsPerIp": 10
+      }
+    }
+  ],
+  "socks": [
+    {
+      "port": 30001,
+      "proxyId": "P2",
+      "defaultChainId": "via-socks"
+    },
+    {
+      "port": 30002,
+      "proxyId": "P1",
+      "defaultChainId": "default",
+      "scopeChains": {
+        "me": "via-socks"
+      }
+    },
+    {
+      "port": 30003,
+      "proxyId": "P1",
+      "defaultChainId": "default",
+      "scopeChains": {
+        "me": "via-socks"
+      }
+    }
+  ],
+  "chains": [
+    {
+      "id": "default",
+      "members": [
+        {
+          "key": "direct",
+          "kind": "direct"
+        }
+      ]
+    },
+    {
+      "id": "via-socks",
+      "members": [
+        {
+          "key": "sock",
+          "kind": "socks5",
+          "addr": "198.51.100.9:1080",
+          "username": "user",
+          "password": "pw"
+        },
+        {
+          "key": "web",
+          "kind": "http",
+          "addr": "proxy.example.com:3128"
+        },
+        {
+          "key": "eth",
+          "kind": "direct",
+          "bindIp": "198.51.100.2"
+        }
+      ]
+    }
+  ],
+  "blacklistCidrs": [
+    "192.0.2.0/24",
+    "198.51.100.7/32"
+  ],
+  "maskDomains": [
+    "a.example.com",
+    "b.example.com",
+    "pool.example.com"
+  ],
+  "health": {
+    "intervalSeconds": 15,
+    "timeoutSeconds": 3,
+    "failThreshold": 4,
+    "recoverThreshold": 1,
+    "dcAddrs": [
+      "149.154.175.50:443",
+      "149.154.167.51:443"
+    ]
+  },
+  "deviceIdleSeconds": 120,
+  "testListeners": [
+    {
+      "port": 40000,
+      "listenerId": "L1"
+    },
+    {
+      "port": 40001,
+      "listenerId": "L2"
+    }
+  ],
+  "probeSources": [
+    "203.0.113.50",
+    "198.51.100.30",
+    "2001:db8::30"
+  ]
+}

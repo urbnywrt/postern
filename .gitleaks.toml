@@ -1,0 +1,25 @@
+title = "Postern gitleaks config"
+
+[extend]
+useDefault = true
+
+# Files that are left out of the scan by their path, each with the reason. A
+# made-up value in a Go test is marked on its line with "gitleaks:allow"
+# instead, so that the rest of the file is still scanned.
+[[allowlists]]
+description = "Made-up test data"
+paths = [
+  # The link vectors, written by gen_vectors.mjs from made-up secrets and
+  # documentation addresses: every one of the 112 lines has a "secret=<hex>"
+  # in it, and JSON has no comment to mark one with.
+  '''internal/links/testdata/reference_vectors\.json$''',
+  # The golden config of the mtg driver: its "secret = ..." line is the
+  # made-up test secret of mtg_test.go, and the file is exact output of the
+  # driver, which a gitleaks:allow comment would change.
+  '''internal/engines/mtg/testdata/faketls\.toml$''',
+  # The two page goldens of the public page, written by its tests from the
+  # made-up secrets of helpers_test.go: the page shows links, which carry
+  # secrets, and the read-only fields next to them, and HTML has no line to
+  # mark them on. The other goldens of that directory are scanned.
+  '''internal/panel/publicpage/testdata/page_(en|ru)\.html$''',
+]

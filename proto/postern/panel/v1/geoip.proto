@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// GeoIPService keeps the country database of the panel: the DB-IP "IP to
+// Country Lite" database, a MaxMind DB file of about 8 MB that gives the
+// country of an IP address. It is what the statistics of client countries rest
+// on, and it is public data: it holds no address of a client or of a node.
+//
+// The panel downloads the file of the current month (the one of the month
+// before when the new one is not published yet) and looks again every day. A
+// panel that cannot reach download.db-ip.com takes the file from an admin
+// instead: PUT /api/geoip, with the file as DB-IP publishes it (gzip) or
+// unpacked as the body, at most 256 MiB, and an admin session. The answer to
+// it is the GeoIPStatus as JSON, a 400 when the file is not a country
+// database, a 413 when it is too large.
+//
+// DB-IP asks for attribution next to everything that shows its data: the text
+// attribution, linked to attribution_url, under the licence. GeoIPStatus
+// carries all three, so that no screen has to repeat them.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+//
+// A refresh that fails to get a database is not an error of the procedure: it
+// is in GeoIPStatus.error, as it is when the panel looks by itself, and the
+// database that the panel had stays in use.
+service GeoIPService {
+  // GetGeoIP says whether country lookups are enabled and which database the
+  // panel has.
+  rpc GetGeoIP(GetGeoIPRequest) returns (GetGeoIPResponse);
+
+  // RefreshGeoIP looks for the database of the current month now, and
+  // downloads it unless the panel has it already. It does nothing while
+  // country lookups are disabled (enabled is false in the answer).
+  rpc RefreshGeoIP(RefreshGeoIPRequest) returns (RefreshGeoIPResponse);
+
+  // SetGeoIPEnabled turns country lookups on or off. Off, the panel makes no
+  // request to DB-IP and gives no country, and its nodes are sent no
+  // database; the file that it has stays where it is.
+  rpc SetGeoIPEnabled(SetGeoIPEnabledRequest) returns (SetGeoIPEnabledResponse);
+}
+
+// GeoIPStatus is the state of the country database of the panel.
+message GeoIPStatus {
+  // enabled is whether country lookups are on. It is on until an admin turns
+  // it off.
+  bool enabled = 1;
+  // present is whether the panel has a database that it can read, downloaded
+  // or uploaded. It is true while enabled is false, too: turning lookups off
+  // keeps the file.
+  bool present = 2;
+  // month is the month of the database, "2026-10": the month that DB-IP
+  // published it for, or the month it was built in, for an upload. Empty
+  // without a database.
+  string month = 3;
+  // built_unix is when the database was built, from its own metadata; 0
+  // without a database.
+  int64 built_unix = 4;
+  // size is the size of the database file in bytes, unpacked.
+  int64 size = 5;
+  // sha256 is the lower-case hex SHA-256 of the unpacked database file. The
+  // nodes name the database by it.
+  string sha256 = 6;
+  // fetched_unix is when the panel got this database, by download or by
+  // upload; 0 without one.
+  int64 fetched_unix = 7;
+  // checked_unix is when the panel last looked for a newer database, whatever
+  // came of it; 0 when it has not.
+  int64 checked_unix = 8;
+  // error is why the last look failed, or the file that the panel had could
+  // not be read. Empty after a look that went well. The database that the panel
+  // had before stays in use.
+  string error = 9;
+  // attribution is the text that DB-IP asks to be shown next to its data, "IP
+  // Geolocation by DB-IP".
+  string attribution = 10;
+  // attribution_url is where attribution links to, https://db-ip.com.
+  string attribution_url = 11;
+  // licence is the licence of the database, "CC BY 4.0".
+  string licence = 12;
+}
+
+message GetGeoIPRequest {}
+
+message GetGeoIPResponse {
+  GeoIPStatus status = 1;
+}
+
+message RefreshGeoIPRequest {}
+
+message RefreshGeoIPResponse {
+  GeoIPStatus status = 1;
+}
+
+message SetGeoIPEnabledRequest {
+  bool enabled = 1;
+}
+
+message SetGeoIPEnabledResponse {
+  GeoIPStatus status = 1;
+}

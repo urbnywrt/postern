@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// NodeService keeps the registry of nodes, the servers that run the Postern
+// agent.
+//
+// CreateNode issues the certificate of a node. The node is installed from the
+// bundle that GET /api/nodes/{id}/bundle.tar serves and the node kit of its
+// architecture that GET /api/node-kit/{arch} serves (an admin session is
+// needed for both; GetNodeInstall says what to download and run), and from
+// then on the panel connects to its agent over mTLS by itself: the status of
+// the node goes from provisioning to online.
+//
+// Every procedure needs a session. Errors are Connect errors:
+//
+//   - INVALID_ARGUMENT: a value is not acceptable, for example an empty name, a
+//     host that is neither an IP address nor a host name, or a port out of
+//     range.
+//   - NOT_FOUND: there is no node with that id.
+//   - FAILED_PRECONDITION: DeleteNode of a node whose egress chain is still
+//     used by another node or by a proxy of another node.
+service NodeService {
+  // ListNodes returns every node, in the order they were created.
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+
+  // GetNode returns one node.
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+  // CreateNode adds a node and issues its certificate. The response says where
+  // to download the bundle that installs the node, and the command that
+  // installs it.
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+
+  // UpdateNode changes the fields that the request sets and leaves the others
+  // as they are. A new management address takes effect at once: the panel
+  // connects to the agent there. The agent itself keeps listening on the port
+  // of its bundle.
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
+
+  // DeleteNode deletes a node together with its listeners, proxies and
+  // statistics, and the panel stops connecting to it. The node itself is not
+  // touched: its agent keeps serving the last state that it had.
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+
+  // GetNodeInstall says how to install a node by hand: where to download its
+  // bundle and the node kit of each architecture, and the command that
+  // installs the node from the two. It is the same for the first install and
+  // for a node that is installed again.
+  rpc GetNodeInstall(GetNodeInstallRequest) returns (GetNodeInstallResponse);
+
+  // SetNodeMgmtMode switches how the panel reaches the agent of a node, with a
+  // live check (spec 5.3). To "hidden": mgmt_sni must be a host name that is no
+  // domain of the node, and public_port a public tls listener of the node; the
+  // node gets mgmt_sni, the panel checks that GetInfo answers through
+  // public_port with that SNI, and only then stores the mode and closes the
+  // plain port. To "port": the node opens the plain port again, the panel
+  // checks GetInfo there, and only then drops mgmt_sni. A failed check leaves
+  // the mode as it was and says why in reason, with ok false. Takes up to a
+  // minute. INVALID_ARGUMENT for a mode other than port or hidden, or a
+  // missing mgmt_sni or public_port with hidden.
+  rpc SetNodeMgmtMode(SetNodeMgmtModeRequest) returns (SetNodeMgmtModeResponse);
+
+  // CreateJoinToken makes a join token for a node and the one command that
+  // installs the node with it: a docker run of the node image, and the same as
+  // a compose file. The node joins the panel with the token
+  // (JoinService.Join) and a key of its own. A node has one token at a time:
+  // a new one replaces the old, which stops working at once. The token is
+  // valid for 24 hours and is in this response only. FAILED_PRECONDITION when
+  // the panel has no node image (POSTERN_NODE_IMAGE, see
+  // GetNodeInstallResponse.node_image); INVALID_ARGUMENT for a panel_url that
+  // is not acceptable; NOT_FOUND for an unknown node.
+  rpc CreateJoinToken(CreateJoinTokenRequest) returns (CreateJoinTokenResponse);
+}
+
+// Node is a server that runs the Postern agent.
+message Node {
+  string id = 1;
+  string name = 2;
+  // mgmt_host and mgmt_port are where the panel reaches the agent.
+  string mgmt_host = 3;
+  uint32 mgmt_port = 4;
+  // link_host is the host that the links of the proxies of this node use,
+  // unless a listener says otherwise.
+  string link_host = 5;
+  // status is provisioning (the agent has not connected yet), online, offline
+  // (the agent has not answered for 30 seconds) or error (the panel will not
+  // or cannot talk to the agent, for example because the node presented a
+  // certificate other than its own; the log of the panel says why).
+  string status = 6;
+  string agent_version = 7;
+  // edge_version is the version of the edge that carries the traffic, as the
+  // edge itself reports it, and empty when the node does not know it: there
+  // is no edge yet, it does not answer, or it is older than the report. An
+  // edge keeps the binary that it was started with when the agent is updated,
+  // until the operator rolls it (install.sh --roll-edge on the node), so an
+  // edge version that is not the agent version is an outdated edge.
+  string edge_version = 8;
+  string arch = 9;
+  string os = 10;
+  repeated string public_ips = 11;
+  // desired_generation is the number of the newest desired state of the node,
+  // applied_generation the number of the one that the node reports as applied.
+  uint64 desired_generation = 12;
+  uint64 applied_generation = 13;
+  // last_seen_unix is when the panel last heard from the agent, in Unix
+  // seconds, 0 for never.
+  int64 last_seen_unix = 14;
+  string note = 15;
+  // last_error says why the node does not run the state that the panel wants
+  // it to, in the words of the node: the reason it gave for refusing the
+  // desired state that the panel sent it, until it has the desired
+  // generation, or else why its last reconcile pass failed (Docker not
+  // answering, the edge refusing its configuration, such as a listener on a
+  // port that another process holds). Empty when neither is the case.
+  string last_error = 16;
+  // capabilities name what the build of the node can do, as it reports them,
+  // sorted: "faketls" (fake-TLS proxies on telemt), "edge-roll",
+  // "edge-version", "last-error", and more in later versions. A node older
+  // than the report has none: it has the baseline of the first release,
+  // fake-TLS proxies on telemt. The versions, the platform, the public IPs and
+  // the capabilities are what the node said the last time that the panel
+  // asked it: when it connects, and every few minutes after.
+  repeated string capabilities = 17;
+  // port_owners are the processes that listen on TCP ports of the node, by
+  // port, as it said them the last time that the panel asked it.
+  repeated PortOwner port_owners = 18;
+  // default_chain_id is the egress chain that the node goes out through, and
+  // the proxies of the node that have none of their own (ChainService); empty
+  // when it has none: it goes out directly.
+  string default_chain_id = 19;
+  // dns_mode is how the containers of the node resolve names: "doh" or
+  // "system", empty for the default, doh (EgressService.SetNodeDnsMode).
+  string dns_mode = 20;
+  // engine_channel is the channel that the proxies of the node follow,
+  // "stable" or "latest": the node's own, or the default of the panel when
+  // the node has none, which engine_channel_default says
+  // (VersionService.SetNodeChannel, SetDefaultChannel).
+  string engine_channel = 21;
+  bool engine_channel_default = 22;
+  // mgmt_mode is how the panel reaches the agent: "port" (mgmt_host:mgmt_port)
+  // or "hidden" (mgmt_host:mgmt_public_port, a public tls listener of the node,
+  // with the TLS SNI mgmt_sni; the plain management port is closed). Only
+  // SetNodeMgmtMode changes these three.
+  string mgmt_mode = 23;
+  string mgmt_sni = 24;
+  uint32 mgmt_public_port = 25;
+  // previous_agent_version is the agent version that bin/previous of the
+  // node points to: the only older version a node update may go back to (a
+  // rollback). Empty when the node has none or has not said.
+  string previous_agent_version = 31;
+  // node_binaries are the agent versions installed in bin/ of the node,
+  // sorted: an edge update may go to any of them.
+  repeated string node_binaries = 27;
+  // healthy says that the running agent wrote the launcher's healthy marker,
+  // as its last answer to GetInfo said.
+  bool healthy = 28;
+  // warnings are the codes of what is unusual about the build of the node
+  // ("test-release-keys", "test-release-keys-ignored",
+  // "edge-handoff-unsafe"), as its last answer to GetInfo said.
+  repeated string warnings = 29;
+  // artifact_source is where the node gets the engine and provider binaries:
+  // "panel" (the default), uploaded by the panel, or "direct", downloaded by
+  // the node itself from the release (capability "artifact-direct"), with the
+  // panel uploading what it still lacks at the next resync.
+  string artifact_source = 26;
+  // panel_addrs are the addresses that the node sees the panel come from,
+  // the last IPv4 and the last IPv6 one; the node lets them probe its
+  // proxies. Read-only.
+  repeated string panel_addrs = 30;
+}
+
+// PortOwner is a process that listens on a TCP port of a node.
+message PortOwner {
+  // bind is the address that it listens on: 0.0.0.0 or :: for all of them.
+  string bind = 1;
+  uint32 port = 2;
+  // owner names the process: a container of Postern (postern-edge-g1,
+  // postern-agent), another process with its id or its container
+  // ("nginx (pid 812)", "caddy (container web)"), or "unknown".
+  string owner = 3;
+  // postern says whether the owner is Postern itself.
+  bool postern = 4;
+}
+
+message ListNodesRequest {}
+
+message ListNodesResponse {
+  repeated Node nodes = 1;
+}
+
+message GetNodeRequest {
+  string id = 1;
+}
+
+message GetNodeResponse {
+  Node node = 1;
+}
+
+message CreateNodeRequest {
+  // name has 1 to 64 characters.
+  string name = 1;
+  // mgmt_host is an IP address (IPv6 without brackets) or a host name.
+  string mgmt_host = 2;
+  // mgmt_port is the port of the agent, 1 to 65535. 0 picks a random high port.
+  uint32 mgmt_port = 3;
+  // link_host is the host of the proxy links. Empty means mgmt_host.
+  string link_host = 4;
+}
+
+message CreateNodeResponse {
+  Node node = 1;
+  // bundle_url is the path at which an admin downloads the bundle of the node,
+  // postern-node-bundle.tar. The bundle holds the private key of the node:
+  // treat it as a secret.
+  string bundle_url = 2;
+  // install_command installs the node, as in GetNodeInstallResponse.
+  string install_command = 3;
+}
+
+message UpdateNodeRequest {
+  string id = 1;
+  // The fields that are set are changed, with the rules of CreateNodeRequest,
+  // except that mgmt_port has to be 1 to 65535. An empty link_host means the
+  // management host.
+  optional string name = 2;
+  optional string mgmt_host = 3;
+  optional uint32 mgmt_port = 4;
+  optional string link_host = 5;
+  // note has at most 1024 characters.
+  optional string note = 6;
+  // artifact_source is "panel" or "direct" (empty means panel); "direct"
+  // needs a node that reports the capability "artifact-direct". A change
+  // raises the desired generation of the node.
+  optional string artifact_source = 7;
+}
+
+message UpdateNodeResponse {
+  Node node = 1;
+}
+
+message DeleteNodeRequest {
+  string id = 1;
+}
+
+message DeleteNodeResponse {}
+
+message GetNodeInstallRequest {
+  string node_id = 1;
+}
+
+message GetNodeInstallResponse {
+  // bundle_url is the path at which an admin downloads the bundle of the node,
+  // as in CreateNodeResponse.
+  string bundle_url = 1;
+  // kits are the node kits of amd64 and arm64, in that order.
+  repeated NodeKit kits = 2;
+  // install_command installs the node from the bundle and the kit. It is run
+  // on the node, in the directory that holds the two files, and has the
+  // literal placeholder <ARCH> where the architecture of the kit goes:
+  //
+  //   tar -xf postern-node-kit-linux-<ARCH>.tar && sudo bash install.sh --bundle postern-node-bundle.tar --binary ./postern-node
+  string install_command = 3;
+  // node_image is the Docker image of the node that CreateJoinToken installs,
+  // with its tag or digest; empty when the panel has none, and so no
+  // one-command install: POSTERN_NODE_IMAGE is not set and the build of the
+  // panel has no default, or the image has no tag and the panel is a dev build.
+  string node_image = 4;
+}
+
+message CreateJoinTokenRequest {
+  string node_id = 1;
+  // panel_url is the address that the node reaches the panel at:
+  // https://host[:port], with no path other than /, no query, no fragment and
+  // no user name; http:// only for a loopback host (127.0.0.0/8, ::1,
+  // localhost).
+  string panel_url = 2;
+}
+
+message CreateJoinTokenResponse {
+  // token is the join token, 43 characters of base64url.
+  string token = 1;
+  // expires_unix is when the token stops working, in Unix seconds.
+  int64 expires_unix = 2;
+  // docker_command installs the node: a docker run, run as root on the node.
+  string docker_command = 3;
+  // compose_yaml is the same as a compose file, for docker compose up -d.
+  string compose_yaml = 4;
+  // image is the node image that the two run, as node_image of
+  // GetNodeInstallResponse.
+  string image = 5;
+}
+
+// NodeKit is what a node is installed from, next to its bundle, for one
+// architecture: the postern-node binary of the version of the panel and the
+// installer files install.sh, launcher.sh and compose.yaml, in one tar file,
+// postern-node-kit-linux-<arch>.tar. The panel image carries the kits.
+message NodeKit {
+  // arch is the architecture of the binary: amd64 or arm64.
+  string arch = 1;
+  // url is the path at which an admin downloads the kit.
+  string url = 2;
+  // available says whether the panel has the kit. A panel that does not run
+  // from its Docker image (go run, or a binary built by hand) has none: the
+  // node is then installed with install.sh --binary and a postern-node
+  // binary of the version of the panel.
+  bool available = 3;
+  // version is the version of the panel, which the binary of the kit has too:
+  // the first word of what "postern-node version" prints.
+  string version = 4;
+}
+
+message SetNodeMgmtModeRequest {
+  string node_id = 1;
+  // mode is "port" or "hidden".
+  string mode = 2;
+  // mgmt_sni and public_port are for mode hidden, and ignored for port.
+  string mgmt_sni = 3;
+  uint32 public_port = 4;
+}
+
+message SetNodeMgmtModeResponse {
+  // ok says whether the node now is in the mode asked for.
+  bool ok = 1;
+  // reason says why not, when ok is false.
+  string reason = 2;
+  // node is the node as it is afterwards.
+  Node node = 3;
+}

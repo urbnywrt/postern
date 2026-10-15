@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package postern.panel.v1;
+
+option go_package = "github.com/urbnywrt/postern/gen/go/postern/panel/v1;panelv1";
+
+// ProbeService shows the probes of the proxies from outside, as a client would
+// connect: the panel probes every enabled proxy of an online node through its
+// link host every probes.interval_minutes (an L2 probe: the fake-TLS handshake
+// with the proxy's secret, then a datacenter's answer through the proxy), and
+// a node probes its own proxies through its test listener. The results are
+// kept for 7 days.
+//
+// The panel's probes reveal the fleet to anyone who can watch the panel's
+// traffic: they connect to every proxy from the panel's address.
+//
+// Every procedure needs an admin. Errors are Connect errors:
+//
+//   - UNAUTHENTICATED: there is no session.
+//   - INVALID_ARGUMENT: a value is missing or not allowed; the message says
+//     which.
+//   - NOT_FOUND: the proxy does not exist.
+//   - FAILED_PRECONDITION: the proxy cannot be probed from the panel: a WEB
+//     proxy, or one without a link host.
+//   - RESOURCE_EXHAUSTED: the proxy was probed on request less than 5 seconds
+//     ago.
+//   - INTERNAL: the panel's own database failed; what it was is in the log.
+service ProbeService {
+  // ProbeNow probes a proxy from the panel now, stores the result as the
+  // scheduled probes are stored, and returns it. One call per proxy every 5
+  // seconds; it is audited (probe.run).
+  rpc ProbeNow(ProbeNowRequest) returns (ProbeNowResponse);
+
+  // ProbeHistory returns the probes of a proxy over a range, from every
+  // vantage, and the uptime of each vantage over it.
+  rpc ProbeHistory(ProbeHistoryRequest) returns (ProbeHistoryResponse);
+}
+
+message ProbeNowRequest {
+  string proxy_id = 1;
+}
+
+message ProbeNowResponse {
+  // kind is what was probed: "l2".
+  string kind = 1;
+  // ok is whether a datacenter answered through the proxy.
+  bool ok = 2;
+  // latency_ms is how long the probe took, in milliseconds.
+  uint32 latency_ms = 3;
+  // error says why it failed, "" when it did not: "unreachable", "refused the
+  // secret", or "no datacenter answered through the proxy (L1 ok)".
+  string error = 4;
+  // l1_ok is whether the proxy proved that it knows the secret (the fake-TLS
+  // handshake), also when no datacenter answered through it.
+  bool l1_ok = 5;
+}
+
+message ProbeHistoryRequest {
+  string proxy_id = 1;
+  // range is "24h" or "7d".
+  string range = 2;
+}
+
+// ProbePoint is one probe.
+message ProbePoint {
+  // ts is when the probe ran, Unix seconds.
+  int64 ts = 1;
+  // vantage is where it ran from: "panel" or "node".
+  string vantage = 2;
+  // kind is what was probed: "l2", or "web" for a WEB proxy.
+  string kind = 3;
+  bool ok = 4;
+  uint32 latency_ms = 5;
+  // error says why it failed, "" when it did not.
+  string error = 6;
+  // l1_ok is whether the proxy proved that it knows the secret (the fake-TLS
+  // handshake), also when no datacenter answered through it: as in
+  // ProbeNowResponse, for a probe of kind "l2" by the panel. False for the
+  // others.
+  bool l1_ok = 7;
+}
+
+// ProbeUptime is the share of probes of a vantage that succeeded over the
+// range.
+message ProbeUptime {
+  string vantage = 1;
+  uint32 ok = 2;
+  uint32 total = 3;
+  // uptime is ok ÷ total, 0 to 1; 0 without probes (total 0 is never sent).
+  double uptime = 4;
+}
+
+message ProbeHistoryResponse {
+  // points are the probes of the range, oldest first.
+  repeated ProbePoint points = 1;
+  // uptimes has one entry per vantage that has probes in the range, by
+  // vantage.
+  repeated ProbeUptime uptimes = 2;
+}
